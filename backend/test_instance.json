@@ -1,0 +1,10 @@
+{
+    "name": "Test Instance",
+    "host": "127.0.0.1",
+    "port": 18080,
+    "channel_id": "ao",
+    "credentials": {
+      "auth_type": "token",
+      "token": "openclaw-ao-v2-server-key-change-me-in-production"
+    }
+}

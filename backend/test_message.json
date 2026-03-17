@@ -1,0 +1,5 @@
+{
+  "content": "Hello, OpenClaw! This is a test message.",
+  "stream": false,
+  "timeout": 60
+}

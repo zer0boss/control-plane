@@ -1,0 +1,7 @@
+{
+  "instance_id": "PLACEHOLDER",
+  "target": "test-session-001",
+  "context": {
+    "test": true
+  }
+}

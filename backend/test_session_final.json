@@ -1,0 +1,7 @@
+{
+  "instance_id": "011b4259-2710-42b7-b3ab-a778478878b1",
+  "target": "test-session-001",
+  "context": {
+    "test": true
+  }
+}
