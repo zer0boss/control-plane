@@ -6,8 +6,10 @@ import {
   LayoutDashboard,
   Menu,
   X,
-  Activity,
   ChevronRight,
+  ClipboardList,
+  Users,
+  Settings,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,8 +23,10 @@ interface LayoutProps {
 const navigation = [
   { name: '仪表盘', href: '/', icon: LayoutDashboard },
   { name: '实例管理', href: '/instances', icon: Server },
-  { name: '会话管理', href: '/sessions', icon: MessageSquare },
-  { name: '聊天', href: '/chat', icon: Activity },
+  { name: '任务管理', href: '/tasks', icon: ClipboardList },
+  { name: '会议讨论', href: '/meetings', icon: Users },
+  { name: '聊天', href: '/chat', icon: MessageSquare },
+  { name: '系统设置', href: '/settings', icon: Settings },
 ];
 
 export function Layout({ children, health }: LayoutProps) {

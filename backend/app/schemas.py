@@ -228,3 +228,482 @@ class WebSocketEvent(BaseModel):
     @field_serializer('timestamp')
     def serialize_datetime(self, dt: datetime, _info) -> str:
         return format_beijing_datetime(dt)
+
+
+# ============================================================================
+# Task Schemas
+# ============================================================================
+
+class TaskStatus(str, Enum):
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    ASSIGNED = "assigned"
+    ANALYZING = "analyzing"
+    DECOMPOSED = "decomposed"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class TaskPriority(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    URGENT = "urgent"
+
+
+class TaskCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=5000)
+    priority: TaskPriority = Field(default=TaskPriority.MEDIUM)
+    tags: list[str] = Field(default_factory=list)
+    extra_data: dict = Field(default_factory=dict)
+    deadline: Optional[datetime] = None
+
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=5000)
+    priority: Optional[TaskPriority] = None
+    tags: Optional[list[str]] = None
+    extra_data: Optional[dict] = None
+    deadline: Optional[datetime] = None
+    status: Optional[TaskStatus] = None
+
+
+class TaskResponse(BaseModel):
+    id: str
+    title: str
+    description: Optional[str] = None
+    status: TaskStatus
+    priority: TaskPriority
+    manager_instance_id: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+    extra_data: dict = Field(default_factory=dict)
+    result: Optional[str] = None
+    summary: Optional[str] = None
+    deadline: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    @field_serializer('deadline', 'started_at', 'completed_at', 'created_at', 'updated_at')
+    def serialize_datetime(self, dt: Optional[datetime], _info) -> Optional[str]:
+        return format_beijing_datetime(dt)
+
+    class Config:
+        from_attributes = True
+
+
+class TaskList(BaseModel):
+    items: list[TaskResponse]
+    total: int
+
+
+class TaskAssignManager(BaseModel):
+    manager_instance_id: str
+
+
+class TaskAnalyze(BaseModel):
+    analysis: str = Field(..., description="Task analysis result")
+    subtasks: list[dict] = Field(default_factory=list, description="Decomposed subtasks")
+
+
+class TaskConfirm(BaseModel):
+    confirmed: bool = True
+
+
+# ============================================================================
+# SubTask Schemas
+# ============================================================================
+
+class SubTaskStatus(str, Enum):
+    PENDING = "pending"
+    ASSIGNED = "assigned"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class SubTaskCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=5000)
+    order: int = Field(default=0)
+    dependencies: list[str] = Field(default_factory=list)
+
+
+class SubTaskUpdate(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=5000)
+    status: Optional[SubTaskStatus] = None
+    executor_instance_id: Optional[str] = None
+    order: Optional[int] = None
+    dependencies: Optional[list[str]] = None
+    result: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+class SubTaskResponse(BaseModel):
+    id: str
+    task_id: str
+    title: str
+    description: Optional[str] = None
+    status: SubTaskStatus
+    executor_instance_id: Optional[str] = None
+    order: int
+    dependencies: list[str] = Field(default_factory=list)
+    result: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    @field_serializer('created_at', 'updated_at')
+    def serialize_datetime(self, dt: datetime, _info) -> str:
+        return format_beijing_datetime(dt)
+
+    class Config:
+        from_attributes = True
+
+
+class SubTaskList(BaseModel):
+    items: list[SubTaskResponse]
+    total: int
+
+
+# ============================================================================
+# Task Progress Schemas
+# ============================================================================
+
+class TaskProgressEventType(str, Enum):
+    CREATED = "created"
+    PUBLISHED = "published"
+    ASSIGNED = "assigned"
+    ANALYZING = "analyzing"
+    DECOMPOSED = "decomposed"
+    STARTED = "started"
+    PROGRESS = "progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SUBTASK_CREATED = "subtask_created"
+    SUBTASK_ASSIGNED = "subtask_assigned"
+    SUBTASK_STARTED = "subtask_started"
+    SUBTASK_COMPLETED = "subtask_completed"
+    SUBTASK_FAILED = "subtask_failed"
+
+
+class TaskProgressResponse(BaseModel):
+    id: str
+    task_id: str
+    subtask_id: Optional[str] = None
+    event_type: TaskProgressEventType
+    message: Optional[str] = None
+    progress_percent: int
+    created_at: datetime
+
+    @field_serializer('created_at')
+    def serialize_datetime(self, dt: datetime, _info) -> str:
+        return format_beijing_datetime(dt)
+
+    class Config:
+        from_attributes = True
+
+
+class TaskProgressList(BaseModel):
+    items: list[TaskProgressResponse]
+    total: int
+
+
+# ============================================================================
+# Meeting Schemas
+# ============================================================================
+
+class MeetingStatus(str, Enum):
+    DRAFT = "draft"
+    READY = "ready"
+    IN_PROGRESS = "in_progress"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+class MeetingType(str, Enum):
+    BRAINSTORM = "brainstorm"
+    EXPERT_DISCUSSION = "expert_discussion"
+    DECISION_MAKING = "decision_making"
+    PROBLEM_SOLVING = "problem_solving"
+    REVIEW = "review"
+
+
+class ParticipantRole(str, Enum):
+    HOST = "host"
+    EXPERT = "expert"
+    PARTICIPANT = "participant"
+    OBSERVER = "observer"
+
+
+class MeetingCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=5000)
+    meeting_type: MeetingType = Field(default=MeetingType.BRAINSTORM)
+    host_instance_id: str
+    max_rounds: int = Field(default=5, ge=1, le=20)
+    context: dict = Field(default_factory=dict)
+    prompt_template_id: Optional[str] = None
+    auto_proceed: bool = Field(default=True)
+
+
+class MeetingUpdate(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=5000)
+    meeting_type: Optional[MeetingType] = None
+    host_instance_id: Optional[str] = None
+    max_rounds: Optional[int] = Field(default=None, ge=1, le=20)
+    context: Optional[dict] = None
+    status: Optional[MeetingStatus] = None
+    prompt_template_id: Optional[str] = None
+    auto_proceed: Optional[bool] = None
+
+
+class MeetingResponse(BaseModel):
+    id: str
+    title: str
+    description: Optional[str] = None
+    meeting_type: MeetingType
+    status: MeetingStatus
+    host_instance_id: str
+    max_rounds: int
+    current_round: int
+    summary: Optional[str] = None
+    context: dict = Field(default_factory=dict)
+    prompt_template_id: Optional[str] = None
+    auto_proceed: bool = True
+    current_speaker_id: Optional[str] = None
+    waiting_for_summary: bool = False
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    @field_serializer('started_at', 'completed_at', 'created_at', 'updated_at')
+    def serialize_datetime(self, dt: Optional[datetime], _info) -> Optional[str]:
+        return format_beijing_datetime(dt)
+
+    class Config:
+        from_attributes = True
+
+
+class MeetingList(BaseModel):
+    items: list[MeetingResponse]
+    total: int
+
+
+# ============================================================================
+# Meeting Participant Schemas
+# ============================================================================
+
+class ParticipantCreate(BaseModel):
+    instance_id: str
+    role: ParticipantRole = Field(default=ParticipantRole.PARTICIPANT)
+    speaking_order: int = Field(default=0, ge=0)
+    expertise: Optional[str] = Field(default=None, max_length=500)
+
+
+class ParticipantUpdate(BaseModel):
+    role: Optional[ParticipantRole] = None
+    speaking_order: Optional[int] = Field(default=None, ge=0)
+    expertise: Optional[str] = Field(default=None, max_length=500)
+    is_active: Optional[bool] = None
+
+
+class ParticipantResponse(BaseModel):
+    id: str
+    meeting_id: str
+    instance_id: str
+    role: ParticipantRole
+    speaking_order: int
+    expertise: Optional[str] = None
+    is_active: bool
+    last_spoken_at: Optional[datetime] = None
+    created_at: datetime
+
+    @field_serializer('last_spoken_at', 'created_at')
+    def serialize_datetime(self, dt: Optional[datetime], _info) -> Optional[str]:
+        return format_beijing_datetime(dt)
+
+    class Config:
+        from_attributes = True
+
+
+class ParticipantList(BaseModel):
+    items: list[ParticipantResponse]
+    total: int
+
+
+class ParticipantsReorder(BaseModel):
+    participant_orders: list[dict]  # [{"id": "uuid", "speaking_order": 1}, ...]
+
+
+# ============================================================================
+# Meeting Message Schemas
+# ============================================================================
+
+class MeetingMessageResponse(BaseModel):
+    id: str
+    meeting_id: str
+    participant_id: str
+    instance_id: str
+    content: str
+    round_number: int
+    speaking_order: int
+    message_type: str
+    extra_data: dict = Field(default_factory=dict)
+    created_at: datetime
+
+    @field_serializer('created_at')
+    def serialize_datetime(self, dt: datetime, _info) -> str:
+        return format_beijing_datetime(dt)
+
+    class Config:
+        from_attributes = True
+
+
+class MeetingMessageList(BaseModel):
+    items: list[MeetingMessageResponse]
+    total: int
+
+
+class MeetingMessageCreate(BaseModel):
+    content: str = Field(..., min_length=1, max_length=10000)
+    message_type: str = Field(default="statement")
+
+
+# ============================================================================
+# Meeting Round Schemas
+# ============================================================================
+
+class MeetingRoundStatus(str, Enum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+
+
+class MeetingRoundResponse(BaseModel):
+    id: str
+    meeting_id: str
+    round_number: int
+    status: MeetingRoundStatus
+    topic: Optional[str] = None
+    summary: Optional[str] = None
+    summarized_at: Optional[datetime] = None
+    summarized_by_participant_id: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_at: datetime
+
+    @field_serializer('summarized_at', 'started_at', 'completed_at', 'created_at')
+    def serialize_datetime(self, dt: Optional[datetime], _info) -> Optional[str]:
+        return format_beijing_datetime(dt)
+
+    class Config:
+        from_attributes = True
+
+
+class MeetingRoundList(BaseModel):
+    items: list[MeetingRoundResponse]
+    total: int
+
+
+class MeetingRoundCreate(BaseModel):
+    topic: Optional[str] = Field(default=None, max_length=500)
+
+
+# ============================================================================
+# Meeting Transcript Schema
+# ============================================================================
+
+class MeetingTranscript(BaseModel):
+    meeting: MeetingResponse
+    participants: list[ParticipantResponse]
+    messages: list[MeetingMessageResponse]
+    rounds: list[MeetingRoundResponse]
+
+
+# ============================================================================
+# Speak Invitation Schema
+# ============================================================================
+
+class SpeakInvitation(BaseModel):
+    participant_id: str
+
+
+class NextSpeakerRequest(BaseModel):
+    participant_id: str
+
+
+class DirectMessageRequest(BaseModel):
+    """Request schema for sending a direct message from host to a participant."""
+    participant_id: str
+    content: str = Field(..., min_length=1, max_length=5000)
+
+
+# ============================================================================
+# Prompt Template Schemas
+# ============================================================================
+
+class PromptTemplateCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    code: str = Field(..., min_length=1, max_length=50)
+    opening_template: str
+    round_summary_template: str
+    guided_speak_template: str
+    free_speak_template: str
+    closing_summary_template: str
+    participant_speak_template: str
+    max_opening_words: int = Field(default=200, ge=50, le=1000)
+    max_summary_words: int = Field(default=300, ge=50, le=1000)
+    max_speak_words: int = Field(default=300, ge=50, le=1000)
+
+
+class PromptTemplateUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=100)
+    opening_template: Optional[str] = None
+    round_summary_template: Optional[str] = None
+    guided_speak_template: Optional[str] = None
+    free_speak_template: Optional[str] = None
+    closing_summary_template: Optional[str] = None
+    participant_speak_template: Optional[str] = None
+    max_opening_words: Optional[int] = Field(default=None, ge=50, le=1000)
+    max_summary_words: Optional[int] = Field(default=None, ge=50, le=1000)
+    max_speak_words: Optional[int] = Field(default=None, ge=50, le=1000)
+
+
+class PromptTemplateResponse(BaseModel):
+    id: str
+    name: str
+    code: str
+    opening_template: str
+    round_summary_template: str
+    guided_speak_template: str
+    free_speak_template: str
+    closing_summary_template: str
+    participant_speak_template: str
+    max_opening_words: int
+    max_summary_words: int
+    max_speak_words: int
+    is_default: bool
+    is_system: bool
+    created_at: datetime
+    updated_at: datetime
+
+    @field_serializer('created_at', 'updated_at')
+    def serialize_datetime(self, dt: datetime, _info) -> str:
+        return format_beijing_datetime(dt)
+
+    class Config:
+        from_attributes = True
+
+
+class PromptTemplateList(BaseModel):
+    items: list[PromptTemplateResponse]
+    total: int

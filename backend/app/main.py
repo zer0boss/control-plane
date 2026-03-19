@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.database import init_db
-from app.routers import instances, sessions, messages, metrics, system
+from app.routers import instances, sessions, messages, metrics, system, tasks, meetings, prompt_templates
 from app.connectors.ao_plugin import get_connector_pool
 
 settings = get_settings()
@@ -70,6 +70,14 @@ async def lifespan(app: FastAPI):
     await init_db()
     log_print("[STARTED]", f"{settings.app_name} v{settings.app_version} started")
     log_print("[METRICS]", f"Available at http://localhost:{settings.port}/metrics")
+
+    # Initialize default prompt template
+    from app.services.prompt_service import PromptService
+    from app.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        prompt_service = PromptService(db)
+        await prompt_service.ensure_default_template_exists()
+        log_print("[INIT]", "Default prompt template ensured")
 
     # Reconnect to instances that were connected before shutdown
     from sqlalchemy import select
@@ -134,6 +142,9 @@ app.include_router(sessions.router, prefix="/api/v1")
 app.include_router(messages.router, prefix="/api/v1")
 app.include_router(metrics.router, prefix="/api/v1")
 app.include_router(system.router, prefix="/api/v1")
+app.include_router(tasks.router, prefix="/api/v1")
+app.include_router(meetings.router, prefix="/api/v1")
+app.include_router(prompt_templates.router, prefix="/api/v1")
 
 
 @app.get("/health")

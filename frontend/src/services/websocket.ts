@@ -11,7 +11,11 @@ class WebSocketService {
   connect() {
     if (this.socket?.connected) return;
 
-    this.socket = io('/', {
+    // 如果不是通过 Vite 代理（端口 3000），直接连接到后端
+    const isDevProxy = window.location.port === '3000';
+    const socketUrl = isDevProxy ? '/' : 'http://localhost:8001';
+
+    this.socket = io(socketUrl, {
       transports: ['polling', 'websocket'],  // Allow polling handshake before WebSocket upgrade
       autoConnect: true,
       reconnection: true,
@@ -50,6 +54,27 @@ class WebSocketService {
     this.socket.on('status', (data: WebSocketEvent) => {
       this.triggerCallbacks('status', data);
     });
+
+    // Meeting events
+    this.socket.on('meeting_update', (data) => {
+      console.log('WebSocket received meeting_update:', data);
+      this.triggerCallbacks('meeting_update', data);
+    });
+
+    this.socket.on('meeting_message', (data) => {
+      console.log('WebSocket received meeting_message:', data);
+      this.triggerCallbacks('meeting_message', data);
+    });
+
+    this.socket.on('participant_update', (data) => {
+      console.log('WebSocket received participant_update:', data);
+      this.triggerCallbacks('participant_update', data);
+    });
+
+    this.socket.on('round_update', (data) => {
+      console.log('WebSocket received round_update:', data);
+      this.triggerCallbacks('round_update', data);
+    });
   }
 
   disconnect() {
@@ -75,6 +100,20 @@ class WebSocketService {
     }
   }
 
+  joinMeeting(meetingId: string) {
+    if (this.socket?.connected) {
+      console.log('Joining meeting room:', meetingId);
+      this.socket.emit('join_meeting', meetingId);
+    }
+  }
+
+  leaveMeeting(meetingId: string) {
+    if (this.socket?.connected) {
+      console.log('Leaving meeting room:', meetingId);
+      this.socket.emit('leave_meeting', meetingId);
+    }
+  }
+
   subscribe(event: string, callback: EventCallback) {
     if (!this.callbacks.has(event)) {
       this.callbacks.set(event, new Set());
@@ -85,6 +124,16 @@ class WebSocketService {
     return () => {
       this.callbacks.get(event)?.delete(callback);
     };
+  }
+
+  // Alias for subscribe - more intuitive API
+  on(event: string, callback: EventCallback) {
+    return this.subscribe(event, callback);
+  }
+
+  // Unsubscribe from an event
+  off(event: string, callback: EventCallback) {
+    this.callbacks.get(event)?.delete(callback);
   }
 
   private triggerCallbacks(event: string, data: WebSocketEvent) {

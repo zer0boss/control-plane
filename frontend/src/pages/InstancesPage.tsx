@@ -53,6 +53,8 @@ export function InstancesPage() {
   const { data: instances, isLoading } = useQuery({
     queryKey: ['instances'],
     queryFn: instanceApi.list,
+    staleTime: 0, // Always consider data stale
+    refetchOnMount: 'always', // Always refetch when component mounts
   });
 
   const createMutation = useMutation({
@@ -402,9 +404,14 @@ export function InstancesPage() {
                     {instance.host}:{instance.port}
                   </div>
                   <div className="flex items-center justify-between">
-                    {getStatusBadge(instance.status)}
+                    <div className="flex items-center gap-2">
+                      {getStatusBadge(instance.status)}
+                      <span className="text-xs text-muted-foreground">
+                        {instance.health?.message_count || 0} messages
+                      </span>
+                    </div>
                     <span className="text-xs text-muted-foreground">
-                      {instance.health?.message_count || 0} messages
+                      {instance.channel_id}
                     </span>
                   </div>
                   {instance.status_message && (

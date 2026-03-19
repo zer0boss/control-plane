@@ -16,6 +16,7 @@ from app.schemas import InstanceCreate, InstanceUpdate, InstanceResponse, Instan
 from app.connectors.ao_plugin import AoPluginConnector, AoConnectionConfig, get_connector_pool
 from app.services.session_manager import MessageService, SessionService
 from app.utils.time_utils import beijing_now_naive, beijing_now, format_beijing_time
+from app.database import AsyncSessionLocal
 import asyncio
 
 # 文件日志
@@ -150,10 +151,12 @@ class InstanceService:
                 instance.last_connected_at = beijing_now_naive()
                 instance.status_message = None
 
-                # Set up handlers - use async wrapper for message handler
+                # Set up handlers - create a new db session for each message
                 async def handle_message_async(msg_data: dict):
                     _log_to_file(f"[InstanceManager] handle_message_async called: type={msg_data.get('type')}")
-                    await self._handle_message(instance_id, msg_data)
+                    # Create a new database session for this message to avoid stale session issues
+                    async with AsyncSessionLocal() as db:
+                        await self._handle_message_with_session(instance_id, msg_data, db)
 
                 _log_to_file(f"[InstanceManager] Registering message handler on connector")
                 connector.on_message(handle_message_async)
@@ -201,7 +204,11 @@ class InstanceService:
         return InstanceHealth()
 
     async def _handle_message(self, instance_id: str, message: dict):
-        """Handle incoming message from AO Plugin.
+        """Handle incoming message from AO Plugin - uses self.db session (legacy method)."""
+        await self._handle_message_with_session(instance_id, message, self.db)
+
+    async def _handle_message_with_session(self, instance_id: str, message: dict, db: AsyncSession):
+        """Handle incoming message from AO Plugin with a specific database session.
 
         This is called when AO Plugin sends a reply back (e.g., from OpenClaw).
         The message format follows ReplyMessage from AO Plugin types:
@@ -244,8 +251,13 @@ class InstanceService:
                 logger.warning(f"[{ts}] [InstanceManager] Reply message missing content: {message}")
                 return
 
+            # Check if this is a meeting message (format: meeting:{id})
+            if session_id.startswith("meeting:"):
+                await self._handle_meeting_message(instance_id, session_id, content, message, db)
+                return
+
             # Create message service to store the reply
-            message_service = MessageService(self.db)
+            message_service = MessageService(db)
 
             # Store as assistant message
             new_message = await message_service.create_message(
@@ -260,7 +272,7 @@ class InstanceService:
             )
 
             # Update session last message timestamp
-            session_service = SessionService(self.db)
+            session_service = SessionService(db)
             await session_service.update_last_message(session_id)
 
             logger.info(f"[{ts}] [InstanceManager] Stored assistant reply for session {session_id}")
@@ -289,6 +301,146 @@ class InstanceService:
         except Exception as e:
             ts = format_beijing_time(beijing_now())
             logger.error(f"[{ts}] [InstanceManager] Failed to handle incoming message: {e}")
+            import traceback
+            logger.error(f"[{ts}] [InstanceManager] Traceback: {traceback.format_exc()}")
+
+    async def _handle_meeting_message(
+        self,
+        instance_id: str,
+        session_id: str,
+        content: str,
+        message: dict,
+        db: AsyncSession
+    ):
+        """Handle incoming meeting message from an instance."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        ts = format_beijing_time(beijing_now())
+        _log_to_file(f"[InstanceManager] Handling meeting message: session_id={session_id}, from_instance={instance_id}")
+
+        try:
+            # Extract meeting_id from session_id (format: meeting:{meeting_id})
+            meeting_id = session_id.replace("meeting:", "")
+
+            # Get meeting to check current speaker
+            from app.models import Meeting, MeetingParticipant
+            result = await db.execute(
+                select(Meeting).where(Meeting.id == meeting_id)
+            )
+            meeting = result.scalar_one_or_none()
+
+            if not meeting or meeting.status.value != "in_progress":
+                logger.warning(f"[{ts}] [InstanceManager] Meeting {meeting_id} not found or not in progress")
+                return
+
+            # Get the expected current speaker's instance_id
+            if meeting.current_speaker_id:
+                result = await db.execute(
+                    select(MeetingParticipant).where(MeetingParticipant.id == meeting.current_speaker_id)
+                )
+                expected_speaker = result.scalar_one_or_none()
+
+                if expected_speaker and expected_speaker.instance_id != instance_id:
+                    # This response is from a different instance than expected - ignore it
+                    expected_name = expected_speaker.instance_id[:8]
+                    logger.warning(
+                        f"[{ts}] [InstanceManager] Ignoring message from {instance_id[:8]}: "
+                        f"expected speaker is {expected_name}"
+                    )
+                    return
+            else:
+                logger.warning(f"[{ts}] [InstanceManager] No current speaker set for meeting {meeting_id}")
+                return
+
+            # Check if this is a summary response (waiting_for_summary=True)
+            # Don't store as regular message, let the flow service handle it
+            if meeting.waiting_for_summary:
+                from app.services.meeting_flow_service import MeetingFlowService
+                from app.models import MeetingRound
+
+                flow_service = MeetingFlowService(db)
+
+                # Need to determine if this is a round summary or closing summary
+                # Check if current round already has a summary stored
+                round_result = await db.execute(
+                    select(MeetingRound).where(
+                        MeetingRound.meeting_id == meeting_id,
+                        MeetingRound.round_number == meeting.current_round
+                    )
+                )
+                current_round_record = round_result.scalar_one_or_none()
+
+                # If current round already has a summary, this must be the closing summary
+                if current_round_record and current_round_record.summary:
+                    logger.info(f"[{ts}] [InstanceManager] Processing meeting closing summary")
+                    # Save the closing summary and complete the meeting
+                    meeting.summary = content
+                    meeting.status = "completed"
+                    meeting.waiting_for_summary = False
+                    from app.utils.time_utils import beijing_now_naive
+                    meeting.completed_at = beijing_now_naive()
+                    await db.commit()
+
+                    # Notify frontend
+                    await push_meeting_update(meeting_id, "meeting_completed", {
+                        "summary": content,
+                    })
+                else:
+                    # This is a round summary response, complete the round
+                    logger.info(f"[{ts}] [InstanceManager] Processing round summary, completing round {meeting.current_round}")
+                    await flow_service.complete_round_and_proceed(
+                        meeting_id,
+                        meeting.current_round,
+                        content
+                    )
+                return
+
+            # Normal message - store it
+            from app.services.meeting_service import MeetingMessageService
+            message_service = MeetingMessageService(db)
+
+            meeting_message = await message_service.handle_meeting_reply(
+                meeting_id=meeting_id,
+                instance_id=instance_id,
+                content=content
+            )
+
+            if meeting_message:
+                logger.info(f"[{ts}] [InstanceManager] Stored meeting message for meeting {meeting_id}")
+
+                # Push message to frontend via Socket.IO
+                try:
+                    from app.services.socketio_service import push_meeting_message
+                    await push_meeting_message(meeting_id, {
+                        "id": meeting_message.id,
+                        "participant_id": meeting_message.participant_id,
+                        "instance_id": instance_id,
+                        "content": content,
+                        "round_number": meeting_message.round_number,
+                        "speaking_order": meeting_message.speaking_order,
+                        "message_type": meeting_message.message_type,
+                    })
+                except Exception as push_error:
+                    logger.warning(f"[{ts}] [InstanceManager] Failed to push meeting message: {push_error}")
+
+                # Auto-proceed to next speaker if auto_proceed is enabled
+                from app.services.meeting_flow_service import MeetingFlowService
+
+                if meeting.auto_proceed:
+                    flow_service = MeetingFlowService(db)
+
+                    # Normal speech, proceed to next speaker
+                    logger.info(f"[{ts}] [InstanceManager] Auto-proceeding to next speaker")
+                    await flow_service.proceed_to_next_speaker(
+                        meeting_id,
+                        meeting_message.participant_id
+                    )
+            else:
+                logger.warning(f"[{ts}] [InstanceManager] Failed to store meeting message - meeting may not be in progress")
+
+        except Exception as e:
+            logger.error(f"[{ts}] [InstanceManager] Error handling meeting message: {e}")
             import traceback
             logger.error(f"[{ts}] [InstanceManager] Traceback: {traceback.format_exc()}")
 
