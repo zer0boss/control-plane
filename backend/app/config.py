@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     # Server
     host: str = Field(default="0.0.0.0", alias="HOST")
-    port: int = Field(default=8000, alias="PORT")
+    port: int = Field(default=8001, alias="PORT")
 
     # Security
     secret_key: str = Field(default="change-me-in-production", alias="SECRET_KEY")

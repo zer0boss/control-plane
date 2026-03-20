@@ -12,8 +12,9 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    strictPort: true, // 如果端口被占用则报错，不要自动切换
     headers: {
-      'Content-Security-Policy': "default-src 'self'; connect-src 'self' http://localhost:8000 ws://localhost:8000 ws://localhost:3000; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;",
+      'Content-Security-Policy': "default-src 'self'; connect-src 'self' http://localhost:8001 ws://localhost:8001 ws://localhost:3000; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;",
     },
     proxy: {
       '/api': {
