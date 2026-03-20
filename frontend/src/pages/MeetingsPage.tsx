@@ -379,10 +379,23 @@ export function MeetingsPage() {
       .map((p: MeetingParticipant) => p.role_code) || []
   );
 
-  // 过滤出可用的预定义角色（未被分配的）
-  const availablePredefinedRoles = currentMeetingTypeRoles.filter(
-    (role) => !assignedRoleCodes.has(role.code)
+  // 检查主持人是否已添加为参会者
+  const hostParticipant = participantsData?.items.find(
+    (p: MeetingParticipant) => p.instance_id === selectedMeeting?.host_instance_id
   );
+
+  // 过滤出可用的预定义角色（未被分配的）
+  // 对于主持人角色（is_host=true），只有主持人实例未被添加时才显示
+  const availablePredefinedRoles = currentMeetingTypeRoles.filter((role) => {
+    // 如果角色已被分配，不可用
+    if (assignedRoleCodes.has(role.code)) return false;
+    // 如果是主持人角色，检查主持人实例是否已被添加
+    if (role.is_host) {
+      // 主持人实例已被添加为参会者，不显示主持人角色选项
+      return !hostParticipant;
+    }
+    return true;
+  });
 
   return (
     <div className="flex h-[calc(100vh-120px)] gap-4">
@@ -878,45 +891,87 @@ export function MeetingsPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
+            {/* 主持人提示 */}
+            {!hostParticipant && selectedMeeting?.host_instance_id && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
+                <div className="flex items-center gap-2 text-blue-700">
+                  <span className="font-medium">主持人角色提示</span>
+                </div>
+                <p className="text-blue-600 mt-1">
+                  选择主持人角色（如蓝色思考帽）时，将自动使用会议创建时指定的主持人实例。
+                </p>
+              </div>
+            )}
+
             {/* 预定义角色选择 */}
             {currentMeetingTypeRoles.length > 0 && (
               <div className="grid gap-2">
                 <Label>预定义角色</Label>
                 <div className="grid grid-cols-2 gap-2">
                   {availablePredefinedRoles.length > 0 ? (
-                    availablePredefinedRoles.map((role) => (
-                      <div
-                        key={role.code}
-                        className={`p-3 border rounded-lg cursor-pointer transition-all ${
-                          newParticipant.role_code === role.code
-                            ? 'border-primary bg-primary/10'
-                            : 'hover:border-primary/50'
-                        }`}
-                        onClick={() => {
-                          setNewParticipant({
-                            ...newParticipant,
-                            role_code: role.code,
-                            role_name: role.name,
-                            role_color: role.color,
-                            role: role.is_host ? 'host' : 'participant',
-                          });
-                        }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="w-4 h-4 rounded-full"
-                            style={{ backgroundColor: role.color }}
-                          />
-                          <span className="font-medium text-sm">{role.name}</span>
+                    availablePredefinedRoles.map((role) => {
+                      // 对于主持人角色，检查是否可用
+                      const isHostRole = role.is_host;
+                      const hostInstanceAvailable = availableInstancesForParticipant.some(
+                        (i) => i.id === selectedMeeting?.host_instance_id
+                      );
+                      const canSelectRole = !isHostRole || hostInstanceAvailable;
+
+                      return (
+                        <div
+                          key={role.code}
+                          className={`p-3 border rounded-lg cursor-pointer transition-all ${
+                            newParticipant.role_code === role.code
+                              ? 'border-primary bg-primary/10'
+                              : canSelectRole
+                              ? 'hover:border-primary/50'
+                              : 'opacity-50 cursor-not-allowed'
+                          }`}
+                          onClick={() => {
+                            if (!canSelectRole) return;
+
+                            // 如果是主持人角色，自动选择主持人实例
+                            if (isHostRole && selectedMeeting?.host_instance_id) {
+                              setNewParticipant({
+                                ...newParticipant,
+                                instance_id: selectedMeeting.host_instance_id,
+                                role_code: role.code,
+                                role_name: role.name,
+                                role_color: role.color,
+                                role: 'host',
+                              });
+                            } else {
+                              setNewParticipant({
+                                ...newParticipant,
+                                role_code: role.code,
+                                role_name: role.name,
+                                role_color: role.color,
+                                role: role.is_host ? 'host' : 'participant',
+                              });
+                            }
+                          }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="w-4 h-4 rounded-full"
+                              style={{ backgroundColor: role.color }}
+                            />
+                            <span className="font-medium text-sm">{role.name}</span>
+                            {isHostRole && (
+                              <Badge variant="outline" className="text-xs">主持人</Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                            {role.description}
+                          </p>
                         </div>
-                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                          {role.description}
-                        </p>
-                      </div>
-                    ))
+                      );
+                    })
                   ) : (
                     <div className="col-span-2 text-sm text-muted-foreground p-2">
-                      所有预定义角色已分配完毕
+                      {hostParticipant
+                        ? '主持人已添加，请选择其他角色'
+                        : '所有预定义角色已分配完毕'}
                     </div>
                   )}
                 </div>
@@ -925,11 +980,20 @@ export function MeetingsPage() {
 
             {/* 实例选择 */}
             <div className="grid gap-2">
-              <Label htmlFor="participant_instance_id">实例</Label>
+              <Label htmlFor="participant_instance_id">
+                实例
+                {newParticipant.role_code && currentMeetingTypeRoles.find(r => r.code === newParticipant.role_code)?.is_host && (
+                  <span className="text-blue-500 ml-2 text-xs">(主持人角色已自动选择主持人实例)</span>
+                )}
+              </Label>
               <Select
                 value={newParticipant.instance_id}
                 onValueChange={(value) =>
                   setNewParticipant({ ...newParticipant, instance_id: value })
+                }
+                disabled={
+                  // 如果选择了主持人角色，禁用实例选择
+                  !!(newParticipant.role_code && currentMeetingTypeRoles.find(r => r.code === newParticipant.role_code)?.is_host)
                 }
               >
                 <SelectTrigger>
@@ -945,6 +1009,9 @@ export function MeetingsPage() {
                       <SelectItem key={instance.id} value={instance.id}>
                         <div className="flex items-center gap-2">
                           <span>{instance.name} ({instance.host}:{instance.port})</span>
+                          {instance.id === selectedMeeting?.host_instance_id && (
+                            <Badge variant="outline" className="text-xs border-blue-500 text-blue-500">主持人</Badge>
+                          )}
                           <Badge variant="default" className="text-xs bg-green-500">已连接</Badge>
                         </div>
                       </SelectItem>

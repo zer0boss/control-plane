@@ -257,6 +257,10 @@ class ParticipantService:
             role=data.role,
             speaking_order=data.speaking_order if data.speaking_order > 0 else max_order + 1,
             expertise=data.expertise,
+            # 预定义角色信息
+            role_code=data.role_code,
+            role_name=data.role_name,
+            role_color=data.role_color,
         )
         self.db.add(participant)
         await self.db.commit()
