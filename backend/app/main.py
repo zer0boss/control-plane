@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.database import init_db
-from app.routers import instances, sessions, messages, metrics, system, tasks, meetings, prompt_templates
+from app.routers import instances, sessions, messages, metrics, system, tasks, meetings, prompt_templates, meeting_type_roles
 from app.connectors.ao_plugin import get_connector_pool
 
 settings = get_settings()
@@ -145,6 +145,7 @@ app.include_router(system.router, prefix="/api/v1")
 app.include_router(tasks.router, prefix="/api/v1")
 app.include_router(meetings.router, prefix="/api/v1")
 app.include_router(prompt_templates.router, prefix="/api/v1")
+app.include_router(meeting_type_roles.router, prefix="/api/v1")
 
 
 @app.get("/health")

@@ -849,3 +849,66 @@ export const promptTemplateApi = {
     }
   },
 };
+
+// Meeting Type Role Configuration API
+export interface MeetingTypeRole {
+  name: string;
+  code: string;
+  color: string;
+  description: string;
+  order: number;
+  is_host: boolean;
+}
+
+export interface MeetingTypeRoleConfig {
+  meeting_type: string;
+  roles: MeetingTypeRole[];
+  is_active: boolean;
+}
+
+export const meetingTypeRoleApi = {
+  list: async (): Promise<{ items: MeetingTypeRoleConfig[] }> => {
+    try {
+      const response = await apiClient.get<{ items: MeetingTypeRoleConfig[] }>('/meeting-type-roles');
+      return response.data;
+    } catch (error) {
+      return handleError(error as AxiosError);
+    }
+  },
+
+  get: async (meetingType: string): Promise<MeetingTypeRoleConfig> => {
+    try {
+      const response = await apiClient.get<MeetingTypeRoleConfig>(`/meeting-type-roles/${meetingType}`);
+      return response.data;
+    } catch (error) {
+      return handleError(error as AxiosError);
+    }
+  },
+
+  update: async (meetingType: string, data: { roles: MeetingTypeRole[]; is_active?: boolean }): Promise<MeetingTypeRoleConfig> => {
+    try {
+      const response = await apiClient.put<MeetingTypeRoleConfig>(`/meeting-type-roles/${meetingType}`, data);
+      return response.data;
+    } catch (error) {
+      return handleError(error as AxiosError);
+    }
+  },
+
+  initDefaults: async (): Promise<{ success: boolean; created: string[] }> => {
+    try {
+      const response = await apiClient.post<{ success: boolean; created: string[] }>('/meeting-type-roles/init-defaults');
+      return response.data;
+    } catch (error) {
+      return handleError(error as AxiosError);
+    }
+  },
+
+  reset: async (meetingType: string): Promise<MeetingTypeRoleConfig> => {
+    try {
+      const response = await apiClient.post<MeetingTypeRoleConfig>(`/meeting-type-roles/${meetingType}/reset`);
+      return response.data;
+    } catch (error) {
+      return handleError(error as AxiosError);
+    }
+  },
+};

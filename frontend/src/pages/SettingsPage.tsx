@@ -15,9 +15,25 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { promptTemplateApi } from '@/services/api';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { promptTemplateApi, meetingTypeRoleApi, MeetingTypeRole } from '@/services/api';
 import type { PromptTemplate, PromptTemplateUpdate } from '@/types';
-import { Save, RotateCcw, Settings as SettingsIcon, FileText } from 'lucide-react';
+import {
+  Save,
+  RotateCcw,
+  Settings as SettingsIcon,
+  FileText,
+  Users,
+  GripVertical,
+  Plus,
+  Trash2,
+} from 'lucide-react';
 
 const TEMPLATE_LABELS: Record<string, { label: string; description: string }> = {
   opening_template: {
@@ -55,17 +71,33 @@ const TEMPLATE_VARIABLES: Record<string, string[]> = {
   closing_summary_template: ['meeting_title', 'meeting_type_label', 'max_rounds', 'all_round_summaries'],
 };
 
+const MEETING_TYPE_LABELS: Record<string, string> = {
+  brainstorm: '头脑风暴',
+  expert_discussion: '专家讨论',
+  decision_making: '决策制定',
+  problem_solving: '问题解决',
+  review: '评审',
+};
+
 export function SettingsPage() {
   const queryClient = useQueryClient();
   const [selectedTemplate, setSelectedTemplate] = useState<PromptTemplate | null>(null);
   const [editForm, setEditForm] = useState<PromptTemplateUpdate>({});
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('opening_template');
+  const [selectedMeetingType, setSelectedMeetingType] = useState<string>('brainstorm');
+  const [editingRoles, setEditingRoles] = useState<MeetingTypeRole[]>([]);
 
   // Fetch templates
   const { data: templatesData, isLoading } = useQuery({
     queryKey: ['prompt-templates'],
     queryFn: promptTemplateApi.list,
+  });
+
+  // Fetch meeting type role configs
+  const { data: roleConfigsData, isLoading: roleConfigsLoading } = useQuery({
+    queryKey: ['meeting-type-roles'],
+    queryFn: meetingTypeRoleApi.list,
   });
 
   // Update template mutation
@@ -80,8 +112,27 @@ export function SettingsPage() {
     },
   });
 
+  // Update role config mutation
+  const updateRoleMutation = useMutation({
+    mutationFn: ({ meetingType, data }: { meetingType: string; data: { roles: MeetingTypeRole[] } }) =>
+      meetingTypeRoleApi.update(meetingType, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['meeting-type-roles'] });
+    },
+  });
+
+  // Reset role config mutation
+  const resetRoleMutation = useMutation({
+    mutationFn: (meetingType: string) => meetingTypeRoleApi.reset(meetingType),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['meeting-type-roles'] });
+    },
+  });
+
   const templates = templatesData?.items || [];
   const defaultTemplate = templates.find((t) => t.is_default);
+  const roleConfigs = roleConfigsData?.items || [];
+  const currentRoleConfig = roleConfigs.find((r) => r.meeting_type === selectedMeetingType);
 
   const handleEditTemplate = (template: PromptTemplate) => {
     setSelectedTemplate(template);
@@ -122,7 +173,71 @@ export function SettingsPage() {
     }
   };
 
-  if (isLoading) {
+  // Role management functions
+  const handleStartEditRoles = () => {
+    if (currentRoleConfig) {
+      setEditingRoles([...currentRoleConfig.roles]);
+    }
+  };
+
+  const handleCancelEditRoles = () => {
+    setEditingRoles([]);
+  };
+
+  const handleSaveRoles = () => {
+    updateRoleMutation.mutate({
+      meetingType: selectedMeetingType,
+      data: { roles: editingRoles },
+    });
+    setEditingRoles([]);
+  };
+
+  const handleResetRoles = () => {
+    resetRoleMutation.mutate(selectedMeetingType);
+  };
+
+  const handleRoleChange = (index: number, field: keyof MeetingTypeRole, value: string | boolean) => {
+    const newRoles = [...editingRoles];
+    newRoles[index] = { ...newRoles[index], [field]: value };
+    setEditingRoles(newRoles);
+  };
+
+  const handleAddRole = () => {
+    const newRole: MeetingTypeRole = {
+      name: `角色 ${editingRoles.length + 1}`,
+      code: `role_${editingRoles.length + 1}`,
+      color: '#6B7280',
+      description: '',
+      order: editingRoles.length + 1,
+      is_host: false,
+    };
+    setEditingRoles([...editingRoles, newRole]);
+  };
+
+  const handleRemoveRole = (index: number) => {
+    const newRoles = editingRoles.filter((_, i) => i !== index);
+    // Reorder
+    newRoles.forEach((role, i) => {
+      role.order = i + 1;
+    });
+    setEditingRoles(newRoles);
+  };
+
+  const handleMoveRole = (index: number, direction: 'up' | 'down') => {
+    if (direction === 'up' && index === 0) return;
+    if (direction === 'down' && index === editingRoles.length - 1) return;
+
+    const newRoles = [...editingRoles];
+    const swapIndex = direction === 'up' ? index - 1 : index + 1;
+    [newRoles[index], newRoles[swapIndex]] = [newRoles[swapIndex], newRoles[index]];
+    // Reorder
+    newRoles.forEach((role, i) => {
+      role.order = i + 1;
+    });
+    setEditingRoles(newRoles);
+  };
+
+  if (isLoading || roleConfigsLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-muted-foreground">加载中...</div>
@@ -130,14 +245,200 @@ export function SettingsPage() {
     );
   }
 
+  const isEditingRoles = editingRoles.length > 0;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">系统设置</h1>
-          <p className="text-muted-foreground mt-1">管理会议流程提示词模板和系统配置</p>
+          <p className="text-muted-foreground mt-1">管理会议流程提示词模板和角色配置</p>
         </div>
       </div>
+
+      {/* Meeting Type Role Configuration */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Users className="h-5 w-5" />
+            会议类型角色配置
+          </CardTitle>
+          <CardDescription>
+            配置不同会议类型的固定角色和发言顺序
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div className="flex items-center gap-4">
+              <Label htmlFor="meeting-type-select">选择会议类型</Label>
+              <Select value={selectedMeetingType} onValueChange={setSelectedMeetingType}>
+                <SelectTrigger id="meeting-type-select" className="w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(MEETING_TYPE_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {currentRoleConfig && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-medium">
+                    {MEETING_TYPE_LABELS[selectedMeetingType]} - 角色列表
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    {!isEditingRoles ? (
+                      <>
+                        <Button size="sm" variant="outline" onClick={handleResetRoles}>
+                          <RotateCcw className="h-4 w-4 mr-1" />
+                          重置默认
+                        </Button>
+                        <Button size="sm" onClick={handleStartEditRoles}>
+                          <SettingsIcon className="h-4 w-4 mr-1" />
+                          编辑角色
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button size="sm" variant="outline" onClick={handleCancelEditRoles}>
+                          取消
+                        </Button>
+                        <Button size="sm" onClick={handleAddRole}>
+                          <Plus className="h-4 w-4 mr-1" />
+                          添加角色
+                        </Button>
+                        <Button size="sm" onClick={handleSaveRoles}>
+                          <Save className="h-4 w-4 mr-1" />
+                          保存
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Role List */}
+                <div className="border rounded-lg divide-y">
+                  {(isEditingRoles ? editingRoles : currentRoleConfig.roles).map((role, index) => (
+                    <div
+                      key={role.code || index}
+                      className="p-4 flex items-start gap-4"
+                    >
+                      {isEditingRoles && (
+                        <div className="flex flex-col gap-1 pt-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => handleMoveRole(index, 'up')}
+                            disabled={index === 0}
+                          >
+                            <GripVertical className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      )}
+                      <div
+                        className="w-4 h-4 rounded-full flex-shrink-0 mt-1"
+                        style={{ backgroundColor: role.color }}
+                      />
+                      <div className="flex-1 min-w-0">
+                        {isEditingRoles ? (
+                          <div className="space-y-3">
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-1">
+                                <Label className="text-xs">角色名称</Label>
+                                <Input
+                                  value={role.name}
+                                  onChange={(e) => handleRoleChange(index, 'name', e.target.value)}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-xs">角色代码</Label>
+                                <Input
+                                  value={role.code}
+                                  onChange={(e) => handleRoleChange(index, 'code', e.target.value)}
+                                />
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-1">
+                                <Label className="text-xs">颜色</Label>
+                                <Input
+                                  type="color"
+                                  value={role.color}
+                                  onChange={(e) => handleRoleChange(index, 'color', e.target.value)}
+                                  className="h-10"
+                                />
+                              </div>
+                              <div className="space-y-1 flex items-end">
+                                <Label className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={role.is_host}
+                                    onChange={(e) => handleRoleChange(index, 'is_host', e.target.checked)}
+                                    className="rounded"
+                                  />
+                                  主持人角色
+                                </Label>
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">角色描述</Label>
+                              <Textarea
+                                value={role.description}
+                                onChange={(e) => handleRoleChange(index, 'description', e.target.value)}
+                                rows={2}
+                              />
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-red-500"
+                              onClick={() => handleRemoveRole(index)}
+                            >
+                              <Trash2 className="h-4 w-4 mr-1" />
+                              删除角色
+                            </Button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{role.name}</span>
+                              <Badge variant="outline" className="text-xs">
+                                #{role.order}
+                              </Badge>
+                              {role.is_host && (
+                                <Badge className="bg-blue-500 text-white text-xs">主持人</Badge>
+                              )}
+                            </div>
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {role.description}
+                            </p>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Six Thinking Hats Info for Brainstorm */}
+                {selectedMeetingType === 'brainstorm' && !isEditingRoles && (
+                  <div className="bg-muted/50 p-4 rounded-lg">
+                    <h4 className="font-medium mb-2">六顶思考帽方法</h4>
+                    <p className="text-sm text-muted-foreground">
+                      头脑风暴会议使用六顶思考帽方法，每种颜色代表不同的思维模式。蓝色帽为主持人角色，负责控制会议流程。
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Prompt Templates Section */}
       <Card>

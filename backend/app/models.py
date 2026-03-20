@@ -350,6 +350,26 @@ class MeetingRound(Base):
 
 
 # ============================================================================
+# Meeting Type Role Configuration
+# ============================================================================
+
+class MeetingTypeRoleConfig(Base):
+    """Role configuration for each meeting type."""
+    __tablename__ = "meeting_type_role_configs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    meeting_type: Mapped[MeetingType] = mapped_column(Enum(MeetingType), nullable=False, unique=True)
+    roles: Mapped[list] = mapped_column(JSON, default=list)  # [{name, color, description, order}]
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=beijing_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=beijing_now_naive,
+        onupdate=beijing_now_naive,
+    )
+
+
+# ============================================================================
 # Prompt Template Model
 # ============================================================================
 
