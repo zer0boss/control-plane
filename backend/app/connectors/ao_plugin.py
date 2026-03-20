@@ -195,7 +195,7 @@ class AoPluginConnector:
             return False
 
     async def disconnect(self) -> None:
-        """Close WebSocket connection."""
+        """Close WebSocket connection gracefully."""
         _log_to_file(f"[WS] disconnect() called, running={self._running}, ws={self.ws is not None}")
         self._running = False
 
@@ -209,9 +209,29 @@ class AoPluginConnector:
             self._connection_task = None
 
         if self.ws:
+            # 发送断开通知消息，让 AO 端立即释放连接
+            if self._is_authenticated:
+                try:
+                    disconnect_msg = {
+                        "type": "disconnect",
+                        "id": f"cp-{uuid.uuid4().hex[:8]}",
+                        "timestamp": int(beijing_now().timestamp() * 1000),
+                        "payload": {
+                            "reason": "client_shutdown",
+                            "controlPlaneId": f"control-plane-{self.config.host}",
+                        },
+                    }
+                    await self.ws.send(json.dumps(disconnect_msg))
+                    _log_to_file(f"[WS] Disconnect notification sent")
+                    # 等待消息发送完成
+                    await asyncio.sleep(0.1)
+                except Exception as e:
+                    _log_to_file(f"[WS] Failed to send disconnect notification: {e}")
+
             _log_to_file(f"[WS] Closing WebSocket connection")
             try:
-                await self.ws.close()
+                # 使用 Close frame with normal closure code
+                await self.ws.close(code=1000, reason="Client shutdown")
                 _log_to_file(f"[WS] WebSocket closed successfully")
             except Exception as e:
                 _log_to_file(f"[WS] Error closing WebSocket: {e}")
