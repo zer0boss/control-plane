@@ -355,6 +355,10 @@ export interface MeetingParticipant {
   is_active: boolean;
   last_spoken_at?: string;
   created_at: string;
+  // 预定义角色信息
+  role_code?: string;
+  role_name?: string;
+  role_color?: string;
 }
 
 export interface ParticipantCreate {
@@ -362,6 +366,10 @@ export interface ParticipantCreate {
   role?: ParticipantRole;
   speaking_order?: number;
   expertise?: string;
+  // 预定义角色关联
+  role_code?: string;
+  role_name?: string;
+  role_color?: string;
 }
 
 export interface ParticipantUpdate {
@@ -369,6 +377,9 @@ export interface ParticipantUpdate {
   speaking_order?: number;
   expertise?: string;
   is_active?: boolean;
+  role_code?: string;
+  role_name?: string;
+  role_color?: string;
 }
 
 export interface ParticipantList {

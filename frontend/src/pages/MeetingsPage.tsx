@@ -39,7 +39,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { meetingApi, instanceApi } from '@/services/api';
+import { meetingApi, instanceApi, meetingTypeRoleApi } from '@/services/api';
 import { wsService } from '@/services/websocket';
 import { useAppStore } from '@/store/appStore';
 import type {
@@ -91,6 +91,10 @@ export function MeetingsPage() {
     instance_id: '',
     role: 'participant' as 'host' | 'expert' | 'participant' | 'observer',
     expertise: '',
+    // 预定义角色
+    role_code: '',
+    role_name: '',
+    role_color: '',
   });
   const [meetingMessages, setMeetingMessages] = useState<MeetingMessage[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -118,6 +122,12 @@ export function MeetingsPage() {
     queryKey: ['meeting-messages', selectedMeeting?.id],
     queryFn: () => (selectedMeeting ? meetingApi.getMessages(selectedMeeting.id, undefined, 200) : null),
     enabled: !!selectedMeeting,
+  });
+
+  // 获取会议类型角色配置
+  const { data: roleConfigsData } = useQuery({
+    queryKey: ['meeting-type-roles'],
+    queryFn: meetingTypeRoleApi.list,
   });
 
   // Update store when data loads
@@ -212,11 +222,21 @@ export function MeetingsPage() {
         instance_id: data.instance_id,
         role: data.role,
         expertise: data.expertise || undefined,
+        role_code: data.role_code || undefined,
+        role_name: data.role_name || undefined,
+        role_color: data.role_color || undefined,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['participants', selectedMeeting?.id] });
       setParticipantDialogOpen(false);
-      setNewParticipant({ instance_id: '', role: 'participant', expertise: '' });
+      setNewParticipant({
+        instance_id: '',
+        role: 'participant',
+        expertise: '',
+        role_code: '',
+        role_name: '',
+        role_color: '',
+      });
     },
   });
 
@@ -346,6 +366,23 @@ export function MeetingsPage() {
     .filter((i) =>
       !participantsData?.items.some((p: MeetingParticipant) => p.instance_id === i.id)
     );
+
+  // 获取当前会议类型的预定义角色
+  const currentMeetingTypeRoles = roleConfigsData?.items.find(
+    (r) => r.meeting_type === selectedMeeting?.meeting_type
+  )?.roles || [];
+
+  // 获取已被分配的角色代码
+  const assignedRoleCodes = new Set(
+    participantsData?.items
+      .filter((p: MeetingParticipant) => p.role_code)
+      .map((p: MeetingParticipant) => p.role_code) || []
+  );
+
+  // 过滤出可用的预定义角色（未被分配的）
+  const availablePredefinedRoles = currentMeetingTypeRoles.filter(
+    (role) => !assignedRoleCodes.has(role.code)
+  );
 
   return (
     <div className="flex h-[calc(100vh-120px)] gap-4">
@@ -574,24 +611,37 @@ export function MeetingsPage() {
                                 {instanceMap.get(participant.instance_id)?.name ||
                                   participant.instance_id}
                               </span>
-                              <Badge
-                                variant={
-                                  participant.role === 'host'
-                                    ? 'default'
+                              {/* 显示预定义角色或默认角色 */}
+                              {participant.role_name ? (
+                                <Badge
+                                  className="text-xs"
+                                  style={{
+                                    backgroundColor: participant.role_color || '#6B7280',
+                                    color: '#fff',
+                                  }}
+                                >
+                                  {participant.role_name}
+                                </Badge>
+                              ) : (
+                                <Badge
+                                  variant={
+                                    participant.role === 'host'
+                                      ? 'default'
+                                      : participant.role === 'expert'
+                                      ? 'secondary'
+                                      : 'outline'
+                                  }
+                                  className="text-xs"
+                                >
+                                  {participant.role === 'host'
+                                    ? '主持人'
                                     : participant.role === 'expert'
-                                    ? 'secondary'
-                                    : 'outline'
-                                }
-                                className="text-xs"
-                              >
-                                {participant.role === 'host'
-                                  ? '主持人'
-                                  : participant.role === 'expert'
-                                  ? '专家'
-                                  : participant.role === 'observer'
-                                  ? '观察员'
-                                  : '参会者'}
-                              </Badge>
+                                    ? '专家'
+                                    : participant.role === 'observer'
+                                    ? '观察员'
+                                    : '参会者'}
+                                </Badge>
+                              )}
                             </div>
                             {selectedMeeting.status === 'in_progress' &&
                               participant.role !== 'host' && (
@@ -801,13 +851,79 @@ export function MeetingsPage() {
       </Dialog>
 
       {/* Add Participant Dialog */}
-      <Dialog open={participantDialogOpen} onOpenChange={setParticipantDialogOpen}>
-        <DialogContent>
+      <Dialog open={participantDialogOpen} onOpenChange={(open) => {
+        setParticipantDialogOpen(open);
+        if (!open) {
+          // 重置表单
+          setNewParticipant({
+            instance_id: '',
+            role: 'participant',
+            expertise: '',
+            role_code: '',
+            role_name: '',
+            role_color: '',
+          });
+        }
+      }}>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>添加参会者</DialogTitle>
-            <DialogDescription>添加一个智能体实例作为会议参会者</DialogDescription>
+            <DialogDescription>
+              添加一个智能体实例作为会议参会者
+              {currentMeetingTypeRoles.length > 0 && (
+                <span className="block mt-1 text-blue-500">
+                  当前会议类型有 {currentMeetingTypeRoles.length} 个预定义角色可用
+                </span>
+              )}
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
+            {/* 预定义角色选择 */}
+            {currentMeetingTypeRoles.length > 0 && (
+              <div className="grid gap-2">
+                <Label>预定义角色</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {availablePredefinedRoles.length > 0 ? (
+                    availablePredefinedRoles.map((role) => (
+                      <div
+                        key={role.code}
+                        className={`p-3 border rounded-lg cursor-pointer transition-all ${
+                          newParticipant.role_code === role.code
+                            ? 'border-primary bg-primary/10'
+                            : 'hover:border-primary/50'
+                        }`}
+                        onClick={() => {
+                          setNewParticipant({
+                            ...newParticipant,
+                            role_code: role.code,
+                            role_name: role.name,
+                            role_color: role.color,
+                            role: role.is_host ? 'host' : 'participant',
+                          });
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="w-4 h-4 rounded-full"
+                            style={{ backgroundColor: role.color }}
+                          />
+                          <span className="font-medium text-sm">{role.name}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                          {role.description}
+                        </p>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="col-span-2 text-sm text-muted-foreground p-2">
+                      所有预定义角色已分配完毕
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* 实例选择 */}
             <div className="grid gap-2">
               <Label htmlFor="participant_instance_id">实例</Label>
               <Select
@@ -837,24 +953,30 @@ export function MeetingsPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="role">角色</Label>
-              <Select
-                value={newParticipant.role}
-                onValueChange={(value: typeof newParticipant.role) =>
-                  setNewParticipant({ ...newParticipant, role: value })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="expert">专家</SelectItem>
-                  <SelectItem value="participant">参会者</SelectItem>
-                  <SelectItem value="observer">观察员</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+
+            {/* 角色（如果没有选择预定义角色） */}
+            {currentMeetingTypeRoles.length === 0 && (
+              <div className="grid gap-2">
+                <Label htmlFor="role">角色类型</Label>
+                <Select
+                  value={newParticipant.role}
+                  onValueChange={(value: typeof newParticipant.role) =>
+                    setNewParticipant({ ...newParticipant, role: value })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="expert">专家</SelectItem>
+                    <SelectItem value="participant">参会者</SelectItem>
+                    <SelectItem value="observer">观察员</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* 专业领域 */}
             <div className="grid gap-2">
               <Label htmlFor="expertise">专业领域</Label>
               <Input
@@ -866,6 +988,31 @@ export function MeetingsPage() {
                 placeholder="描述该参会者的专业领域（可选）"
               />
             </div>
+
+            {/* 显示选中的预定义角色 */}
+            {newParticipant.role_code && (
+              <div className="flex items-center gap-2 p-2 bg-muted rounded">
+                <div
+                  className="w-4 h-4 rounded-full"
+                  style={{ backgroundColor: newParticipant.role_color }}
+                />
+                <span className="text-sm">已选择: {newParticipant.role_name}</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto"
+                  onClick={() => setNewParticipant({
+                    ...newParticipant,
+                    role_code: '',
+                    role_name: '',
+                    role_color: '',
+                    role: 'participant',
+                  })}
+                >
+                  清除
+                </Button>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setParticipantDialogOpen(false)}>

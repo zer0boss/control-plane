@@ -297,6 +297,10 @@ class MeetingParticipant(Base):
         Enum(ParticipantRole),
         default=ParticipantRole.PARTICIPANT,
     )
+    # 关联预定义角色
+    role_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # e.g., "blue_hat", "white_hat"
+    role_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)  # e.g., "蓝色思考帽"
+    role_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # e.g., "#3B82F6"
     speaking_order: Mapped[int] = mapped_column(default=0)
     expertise: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True)

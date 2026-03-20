@@ -507,6 +507,10 @@ class ParticipantCreate(BaseModel):
     role: ParticipantRole = Field(default=ParticipantRole.PARTICIPANT)
     speaking_order: int = Field(default=0, ge=0)
     expertise: Optional[str] = Field(default=None, max_length=500)
+    # 预定义角色关联
+    role_code: Optional[str] = Field(default=None, max_length=50)
+    role_name: Optional[str] = Field(default=None, max_length=100)
+    role_color: Optional[str] = Field(default=None, max_length=20)
 
 
 class ParticipantUpdate(BaseModel):
@@ -514,6 +518,9 @@ class ParticipantUpdate(BaseModel):
     speaking_order: Optional[int] = Field(default=None, ge=0)
     expertise: Optional[str] = Field(default=None, max_length=500)
     is_active: Optional[bool] = None
+    role_code: Optional[str] = Field(default=None, max_length=50)
+    role_name: Optional[str] = Field(default=None, max_length=100)
+    role_color: Optional[str] = Field(default=None, max_length=20)
 
 
 class ParticipantResponse(BaseModel):
@@ -526,6 +533,10 @@ class ParticipantResponse(BaseModel):
     is_active: bool
     last_spoken_at: Optional[datetime] = None
     created_at: datetime
+    # 预定义角色信息
+    role_code: Optional[str] = None
+    role_name: Optional[str] = None
+    role_color: Optional[str] = None
 
     @field_serializer('last_spoken_at', 'created_at')
     def serialize_datetime(self, dt: Optional[datetime], _info) -> Optional[str]:
