@@ -95,6 +95,8 @@ async def lifespan(app: FastAPI):
         if connected_instances:
             log_print("[RECONNECT]", f"Found {len(connected_instances)} connected instances, reconnecting...")
             instance_service = InstanceService(db)
+
+            # 顺序连接，避免同时建立过多连接
             for instance in connected_instances:
                 try:
                     # Set status to connecting first
@@ -106,6 +108,13 @@ async def lifespan(app: FastAPI):
                         log_print("[RECONNECT]", f"Successfully connected to instance {instance.name} ({instance.id})")
                     else:
                         log_print("[RECONNECT]", f"Failed to connect to instance {instance.name} ({instance.id})")
+                        instance.status = InstanceStatus.ERROR
+                        instance.status_message = "Connection failed"
+                        await db.commit()
+
+                    # 每次连接后等待一小段时间，让 AO 端有时间处理
+                    await asyncio.sleep(0.5)
+
                 except Exception as e:
                     log_print("[RECONNECT]", f"Error connecting to instance {instance.name}: {e}")
                     instance.status = InstanceStatus.ERROR

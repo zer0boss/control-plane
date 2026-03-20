@@ -97,6 +97,47 @@ class AoPluginConnector:
         scheme = "wss" if self.config.port == 443 else "ws"
         return f"{scheme}://{self.config.host}:{self.config.port}/ws/openclaw"
 
+    async def _notify_disconnect_old_connection(self) -> None:
+        """
+        尝试通知 AO 端断开旧连接。
+        在建立新连接前调用，确保 AO 端释放旧连接槽位。
+        """
+        try:
+            # 创建临时连接发送 disconnect 消息
+            _log_to_file(f"[WS] Attempting to notify old connection disconnect for {self.ws_url}")
+            temp_ws = await websockets.connect(
+                self.ws_url,
+                ping_interval=20,
+                ping_timeout=10,
+                close_timeout=2,
+            )
+
+            # 发送 disconnect 消息
+            disconnect_msg = {
+                "type": "disconnect",
+                "id": f"cp-cleanup-{uuid.uuid4().hex[:8]}",
+                "timestamp": int(beijing_now().timestamp() * 1000),
+                "payload": {
+                    "reason": "new_connection_request",
+                    "controlPlaneId": f"control-plane-{self.config.host}",
+                },
+            }
+            await temp_ws.send(json.dumps(disconnect_msg))
+            _log_to_file(f"[WS] Disconnect notification sent for cleanup")
+
+            # 等待消息发送并关闭
+            await asyncio.sleep(0.2)
+            await temp_ws.close(code=1000, reason="Cleanup complete")
+            _log_to_file(f"[WS] Temp connection closed")
+
+            # 给 AO 端一点时间处理
+            await asyncio.sleep(0.3)
+
+        except Exception as e:
+            # 忽略错误，这可能是因为 AO 端拒绝连接或其他原因
+            _log_to_file(f"[WS] _notify_disconnect_old_connection error (expected): {e}")
+            pass
+
     async def connect(self) -> bool:
         """
         Establish WebSocket connection.
@@ -108,6 +149,10 @@ class AoPluginConnector:
             return True
 
         try:
+            # 先尝试发送断开通知给旧连接（即使我们没有旧 connector）
+            # 这样新连接时可以让 AO 端释放旧连接
+            await self._notify_disconnect_old_connection()
+
             self.ws = await websockets.connect(
                 self.ws_url,
                 ping_interval=20,
