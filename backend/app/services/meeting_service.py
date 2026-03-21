@@ -207,6 +207,167 @@ class MeetingService:
         await self.db.refresh(meeting)
         return meeting
 
+    async def restart_meeting(self, meeting_id: str) -> Optional[Meeting]:
+        """
+        重新开会 - 重置会议状态，清除轮次和消息历史
+
+        将已完成的会议重置为草稿状态，保留参会者配置。
+        """
+        meeting = await self.get_meeting(meeting_id)
+        if not meeting:
+            return None
+
+        # 只能重新开始已完成或已取消的会议
+        if meeting.status not in [MeetingStatus.COMPLETED, MeetingStatus.CANCELLED]:
+            return None
+
+        # 删除所有轮次记录
+        from sqlalchemy import delete
+        await self.db.execute(
+            delete(MeetingRound).where(MeetingRound.meeting_id == meeting_id)
+        )
+
+        # 删除所有消息记录
+        await self.db.execute(
+            delete(MeetingMessage).where(MeetingMessage.meeting_id == meeting_id)
+        )
+
+        # 重置会议状态
+        meeting.status = MeetingStatus.DRAFT
+        meeting.current_round = 0
+        meeting.summary = None
+        meeting.started_at = None
+        meeting.completed_at = None
+        meeting.waiting_for_summary = False
+        meeting.current_speaker_id = None
+        meeting.updated_at = beijing_now_naive()
+
+        await self.db.commit()
+        await self.db.refresh(meeting)
+        return meeting
+
+    async def continue_meeting(
+        self,
+        meeting_id: str,
+        title: str = None,
+        description: str = None,
+        max_rounds: int = None,
+        continue_reason: str = "deepen"
+    ) -> Optional[Meeting]:
+        """
+        继续开会 - 创建系列会议的新会议
+
+        基于已完成的会议创建新会议，保留参会者配置，
+        形成系列会议，保留原有会议记录。
+        """
+        meeting = await self.get_meeting(meeting_id)
+        if not meeting:
+            return None
+
+        # 只能继续已完成或已取消的会议
+        if meeting.status not in [MeetingStatus.COMPLETED, MeetingStatus.CANCELLED]:
+            return None
+
+        # 计算系列顺序
+        series_order = meeting.series_order + 1
+
+        # 创建新会议
+        new_meeting = Meeting(
+            id=str(uuid.uuid4()),
+            title=title or meeting.title,
+            description=description or meeting.description,
+            meeting_type=meeting.meeting_type,
+            host_instance_id=meeting.host_instance_id,
+            max_rounds=max_rounds or meeting.max_rounds,
+            context=meeting.context,
+            prompt_template_id=meeting.prompt_template_id,
+            auto_proceed=meeting.auto_proceed,
+            status=MeetingStatus.DRAFT,
+            current_round=0,
+            parent_meeting_id=meeting_id,
+            series_order=series_order,
+            continue_reason=continue_reason,
+        )
+        self.db.add(new_meeting)
+        await self.db.flush()  # 获取新会议ID
+
+        # 复制参会者
+        participants_result = await self.db.execute(
+            select(MeetingParticipant).where(MeetingParticipant.meeting_id == meeting_id)
+        )
+        participants = participants_result.scalars().all()
+
+        for p in participants:
+            new_participant = MeetingParticipant(
+                id=str(uuid.uuid4()),
+                meeting_id=new_meeting.id,
+                instance_id=p.instance_id,
+                role=p.role,
+                speaking_order=p.speaking_order,
+                expertise=p.expertise,
+                role_code=p.role_code,
+                role_name=p.role_name,
+                role_color=p.role_color,
+            )
+            self.db.add(new_participant)
+
+        await self.db.commit()
+        await self.db.refresh(new_meeting)
+        return new_meeting
+
+    async def get_series_meetings(self, meeting_id: str) -> List[Meeting]:
+        """
+        获取系列会议的所有会议
+
+        返回同一系列的所有会议，按 series_order 排序。
+        如果该会议不属于系列会议，返回只包含自己的列表。
+        """
+        meeting = await self.get_meeting(meeting_id)
+        if not meeting:
+            return []
+
+        # 找到系列的根会议（第一个会议）
+        root_meeting_id = meeting.id
+        if meeting.parent_meeting_id:
+            # 向上追溯找到根会议
+            current = meeting
+            while current.parent_meeting_id:
+                parent = await self.get_meeting(current.parent_meeting_id)
+                if not parent:
+                    break
+                current = parent
+            root_meeting_id = current.id
+
+        # 查找所有属于这个系列的会议
+        # 方法：找到所有以 root_meeting_id 为根的会议
+        # 包括：root_meeting_id 本身，以及所有 parent_meeting_id 指向系列中会议的会议
+
+        result = await self.db.execute(
+            select(Meeting).where(Meeting.id == root_meeting_id)
+        )
+        root_meeting = result.scalar_one_or_none()
+        if not root_meeting:
+            return [meeting] if meeting else []
+
+        # 收集所有系列会议
+        series_meetings = [root_meeting]
+
+        # 递归查找所有子会议
+        async def find_children(parent_id: str):
+            result = await self.db.execute(
+                select(Meeting).where(Meeting.parent_meeting_id == parent_id)
+            )
+            children = result.scalars().all()
+            for child in children:
+                series_meetings.append(child)
+                await find_children(child.id)
+
+        await find_children(root_meeting_id)
+
+        # 按 series_order 排序
+        series_meetings.sort(key=lambda m: m.series_order)
+        return series_meetings
+
     async def set_ready(self, meeting_id: str) -> Optional[Meeting]:
         """Set meeting status to READY."""
         meeting = await self.get_meeting(meeting_id)

@@ -86,6 +86,9 @@ class InstanceHealth(BaseModel):
     last_ping_at: Optional[datetime] = None
     reconnect_count: int = 0
     error_count: int = 0
+    # AO 端连接数信息
+    ao_connections: Optional[int] = None
+    ao_max_connections: Optional[int] = None
 
     @field_serializer('last_ping_at')
     def serialize_datetime(self, dt: Optional[datetime], _info) -> Optional[str]:
@@ -465,6 +468,20 @@ class MeetingUpdate(BaseModel):
     auto_proceed: Optional[bool] = None
 
 
+class ContinueReason(str, Enum):
+    """Reason for continuing a meeting."""
+    CORRECTION = "correction"  # 纠偏
+    DEEPEN = "deepen"  # 深入
+
+
+class MeetingContinue(BaseModel):
+    """Schema for continuing a meeting (creating a new meeting in series)."""
+    title: Optional[str] = Field(default=None, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=5000)
+    max_rounds: Optional[int] = Field(default=None, ge=1, le=20)
+    continue_reason: ContinueReason = Field(default=ContinueReason.DEEPEN)
+
+
 class MeetingResponse(BaseModel):
     id: str
     title: str
@@ -480,6 +497,10 @@ class MeetingResponse(BaseModel):
     auto_proceed: bool = True
     current_speaker_id: Optional[str] = None
     waiting_for_summary: bool = False
+    # 系列会议
+    parent_meeting_id: Optional[str] = None
+    series_order: int = 1
+    continue_reason: Optional[str] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     created_at: datetime

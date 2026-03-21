@@ -85,6 +85,19 @@ class AoPluginConnector:
         self._last_error: Optional[str] = None
         self._connection_task: Optional[asyncio.Task] = None
         self._running = False
+        # AO 端连接数信息
+        self._ao_connections: Optional[int] = None
+        self._ao_max_connections: Optional[int] = None
+
+    @property
+    def ao_connections(self) -> Optional[int]:
+        """Get current AO server connections count."""
+        return self._ao_connections
+
+    @property
+    def ao_max_connections(self) -> Optional[int]:
+        """Get AO server max connections limit."""
+        return self._ao_max_connections
 
     @property
     def is_connected(self) -> bool:
@@ -430,6 +443,11 @@ class AoPluginConnector:
                 # Handle welcome message (AO Plugin V2)
                 if msg_type == "welcome":
                     print(f"DEBUG: Received welcome from AO Plugin")
+                    # 提取连接数信息
+                    payload = data.get("payload", {})
+                    self._ao_connections = payload.get("connections")
+                    self._ao_max_connections = payload.get("maxConnections")
+                    _log_to_file(f"[WS] Welcome: AO connections={self._ao_connections}/{self._ao_max_connections}")
                     continue
 
                 # Handle auth_response (AO Plugin V2)
@@ -458,6 +476,11 @@ class AoPluginConnector:
 
                 if msg_type == "pong":
                     self._last_ping_at = beijing_now()
+                    # 提取连接数信息
+                    payload = data.get("payload", {})
+                    if payload:
+                        self._ao_connections = payload.get("connections")
+                        self._ao_max_connections = payload.get("maxConnections")
                     continue
 
                 # Handle reply messages from AO Plugin

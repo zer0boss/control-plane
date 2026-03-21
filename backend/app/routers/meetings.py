@@ -16,6 +16,7 @@ from app.schemas import (
     MeetingUpdate,
     MeetingResponse,
     MeetingList,
+    MeetingContinue,
     ParticipantCreate,
     ParticipantUpdate,
     ParticipantResponse,
@@ -98,6 +99,17 @@ async def get_meeting(
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
     return meeting
+
+
+@router.get("/{meeting_id}/series", response_model=MeetingList)
+async def get_series_meetings(
+    meeting_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all meetings in the same series."""
+    service = MeetingService(db)
+    meetings = await service.get_series_meetings(meeting_id)
+    return MeetingList(items=meetings, total=len(meetings))
 
 
 @router.patch("/{meeting_id}", response_model=MeetingResponse)
@@ -269,6 +281,61 @@ async def cancel_meeting(
     )
 
     return meeting
+
+
+@router.post("/{meeting_id}/restart", response_model=MeetingResponse)
+async def restart_meeting(
+    meeting_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """重新开会 - 重置会议状态，保留参会者配置"""
+    service = MeetingService(db)
+    meeting = await service.restart_meeting(meeting_id)
+    if not meeting:
+        raise HTTPException(
+            status_code=400,
+            detail="Meeting not found or cannot be restarted"
+        )
+
+    # Notify via Socket.IO
+    await push_meeting_update(
+        meeting_id,
+        "restarted",
+        {"status": meeting.status.value}
+    )
+
+    return meeting
+
+
+@router.post("/{meeting_id}/continue", response_model=MeetingResponse)
+async def continue_meeting(
+    meeting_id: str,
+    data: MeetingContinue,
+    db: AsyncSession = Depends(get_db),
+):
+    """继续开会 - 创建系列会议的新会议，保留参会者配置"""
+    service = MeetingService(db)
+    new_meeting = await service.continue_meeting(
+        meeting_id,
+        title=data.title,
+        description=data.description,
+        max_rounds=data.max_rounds,
+        continue_reason=data.continue_reason.value,
+    )
+    if not new_meeting:
+        raise HTTPException(
+            status_code=400,
+            detail="Meeting not found or cannot be continued"
+        )
+
+    # Notify via Socket.IO about new meeting
+    await push_meeting_update(
+        new_meeting.id,
+        "created",
+        {"parent_meeting_id": meeting_id, "series_order": new_meeting.series_order}
+    )
+
+    return new_meeting
 
 
 # ============================================================================

@@ -275,6 +275,10 @@ class Meeting(Base):
     auto_proceed: Mapped[bool] = mapped_column(default=True)
     current_speaker_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     waiting_for_summary: Mapped[bool] = mapped_column(default=False)
+    # 系列会议
+    parent_meeting_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    series_order: Mapped[int] = mapped_column(default=1)  # 系列中的顺序，1表示第一次会议
+    continue_reason: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # 纠偏/深入
     # 时间戳
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

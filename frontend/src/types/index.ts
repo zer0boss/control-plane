@@ -27,6 +27,9 @@ export interface Instance {
     last_ping?: string;
     reconnect_count: number;
     message_count: number;
+    // AO 端连接数信息
+    ao_connections?: number;
+    ao_max_connections?: number;
   };
   created_at: string;
   updated_at: string;
@@ -311,6 +314,10 @@ export interface Meeting {
   auto_proceed: boolean;
   current_speaker_id?: string;
   waiting_for_summary: boolean;
+  // 系列会议
+  parent_meeting_id?: string;
+  series_order: number;
+  continue_reason?: string;
   started_at?: string;
   completed_at?: string;
   created_at: string;
@@ -338,6 +345,15 @@ export interface MeetingUpdate {
   status?: MeetingStatus;
   prompt_template_id?: string;
   auto_proceed?: boolean;
+}
+
+export type ContinueReason = 'correction' | 'deepen';
+
+export interface MeetingContinue {
+  title?: string;
+  description?: string;
+  max_rounds?: number;
+  continue_reason?: ContinueReason;
 }
 
 export interface MeetingList {

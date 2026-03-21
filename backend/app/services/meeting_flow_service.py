@@ -40,6 +40,69 @@ PARTICIPANT_ROLE_LABELS = {
     ParticipantRole.OBSERVER: "观察员",
 }
 
+# 角色任务提示（根据六顶思考帽等方法论定义）
+ROLE_TASKS = {
+    "blue_hat": "作为主持人，控制和调节思维过程，确保讨论有序进行，适时总结并做出结论。",
+    "white_hat": "关注客观事实和数据，提供中立、客观的信息，不带主观判断。",
+    "red_hat": "表达你的情绪、直觉、感受和预感，不需要给出理由，这是情感视角的贡献。",
+    "yellow_hat": "从正面考虑问题，表达乐观、满怀希望的建设性观点，寻找价值和好处。",
+    "black_hat": "运用否定、怀疑、质疑的看法，合乎逻辑地进行批判，指出潜在问题和风险。",
+    "green_hat": "进行创造性思考，提出新想法、新方案，尝试求异思维和头脑风暴。",
+    "host": "作为主持人，引导讨论方向，确保每位参会者都有机会发言，适时总结观点。",
+    "expert": "从你的专业领域出发，提供深入的分析和见解。",
+    "participant": "积极参与讨论，分享你的观点和想法。",
+    "observer": "观察讨论过程，在适当时机提供客观的观察反馈。",
+}
+
+# 默认角色配置（用于获取角色描述）
+DEFAULT_ROLE_CONFIGS = {
+    "brainstorm": {
+        "roles": {
+            "blue_hat": {"name": "蓝色思考帽", "description": "主持人 - 负责控制和调节思维过程，规划和管理整个思考过程，并负责做出结论"},
+            "white_hat": {"name": "白色思考帽", "description": "中立客观 - 关注客观的事实和数据"},
+            "red_hat": {"name": "红色思考帽", "description": "情感色彩 - 表现情绪、直觉、感受、预感等方面的看法"},
+            "yellow_hat": {"name": "黄色思考帽", "description": "价值与肯定 - 从正面考虑问题，表达乐观的、满怀希望的、建设性的观点"},
+            "black_hat": {"name": "黑色思考帽", "description": "批判质疑 - 运用否定、怀疑、质疑的看法，合乎逻辑的进行批判"},
+            "green_hat": {"name": "绿色思考帽", "description": "创造生机 - 创造性思考、头脑风暴、求异思维"},
+        }
+    },
+    "expert_discussion": {
+        "roles": {
+            "host": {"name": "主持人", "description": "负责引导讨论，确保讨论有序进行"},
+            "expert": {"name": "专家", "description": "从专业角度提供深入分析和见解"},
+            "participant": {"name": "参会者", "description": "积极参与讨论，分享观点"},
+        }
+    },
+}
+
+
+def get_role_info(meeting_type: str, role_code: str) -> dict:
+    """
+    获取角色信息（名称、描述、任务提示）
+
+    Args:
+        meeting_type: 会议类型（如 "brainstorm"）
+        role_code: 角色代码（如 "black_hat"）
+
+    Returns:
+        dict: {"name": "黑色思考帽", "description": "...", "task": "..."}
+    """
+    result = {"name": "参会者", "description": "", "task": "从你的专业领域出发，针对会议主题发表观点。"}
+
+    # 从配置中获取角色信息
+    type_config = DEFAULT_ROLE_CONFIGS.get(meeting_type, {})
+    roles = type_config.get("roles", {})
+    role_info = roles.get(role_code, {})
+
+    if role_info:
+        result["name"] = role_info.get("name", result["name"])
+        result["description"] = role_info.get("description", "")
+
+    # 获取任务提示
+    result["task"] = ROLE_TASKS.get(role_code, result["task"])
+
+    return result
+
 
 class MeetingFlowService:
     """会议流程自动控制服务"""
@@ -218,12 +281,16 @@ class MeetingFlowService:
 
                     return success
         else:
-            # 本轮所有参会者都已发言完毕，邀请主持人摘要
-            return await self._request_round_summary(meeting)
+            # 本轮所有参会者都已发言完毕
+            # 最后一轮直接做会议总结，非最后一轮做轮次摘要
+            if meeting.current_round >= meeting.max_rounds:
+                return await self._end_meeting(meeting)
+            else:
+                return await self._request_round_summary(meeting)
 
     async def _request_round_summary(self, meeting: Meeting) -> bool:
         """
-        邀请主持人生成轮次摘要
+        邀请主持人生成轮次摘要（仅用于非最后一轮）
 
         Returns:
             是否成功邀请
@@ -528,17 +595,37 @@ class MeetingFlowService:
         # 获取之前轮次摘要
         previous_summaries = await self._get_previous_summaries(meeting.id, meeting.current_round)
 
+        # 获取角色信息（优先使用参会者的角色信息，否则从配置获取）
+        if participant.role_code:
+            # 使用参会者设置的角色代码获取详细角色信息
+            role_info = get_role_info(meeting.meeting_type.value, participant.role_code)
+            your_role = participant.role_name or role_info["name"]
+            role_description = role_info["description"]
+            role_task = role_info["task"]
+        elif participant.role_name:
+            # 有角色名称但没有代码
+            your_role = participant.role_name
+            role_description = ""
+            role_task = "从你的专业领域出发，针对会议主题发表观点。"
+        else:
+            # 使用默认角色标签
+            your_role = PARTICIPANT_ROLE_LABELS.get(participant.role, "参会者")
+            role_description = ""
+            role_task = "从你的专业领域出发，针对会议主题发表观点。"
+
         prompt = self.prompt_service.render_participant_speak(
             template=template,
             meeting_title=meeting.title,
             meeting_type_label=MEETING_TYPE_LABELS.get(meeting.meeting_type, "会议"),
             round_number=meeting.current_round,
             max_rounds=meeting.max_rounds,
-            your_role=PARTICIPANT_ROLE_LABELS.get(participant.role, "参会者"),
+            your_role=your_role,
             your_expertise=participant.expertise or "",
             previous_summaries=previous_summaries,
             current_round_messages=current_messages,
             host_invitation="请分享你的观点。",
+            role_description=role_description,
+            role_task=role_task,
         )
 
         return await self._send_to_instance(

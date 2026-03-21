@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Plus,
@@ -10,12 +10,16 @@ import {
   MessageSquare,
   Trash2,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
   AlertCircle,
   Loader2,
   SkipForward,
   UserPlus,
   Mic,
   Mail,
+  RotateCcw,
+  Pencil,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -43,6 +47,7 @@ import { meetingApi, instanceApi, meetingTypeRoleApi } from '@/services/api';
 import { wsService } from '@/services/websocket';
 import { useAppStore } from '@/store/appStore';
 import type {
+  Meeting,
   MeetingStatus,
   MeetingType,
   MeetingParticipant,
@@ -71,7 +76,7 @@ const meetingTypeConfig: Record<MeetingType, { label: string }> = {
 
 export function MeetingsPage() {
   const queryClient = useQueryClient();
-  const { meetings, setMeetings, selectedMeeting, selectMeeting, updateMeeting } = useAppStore();
+  const { setMeetings, selectedMeeting, selectMeeting, updateMeeting } = useAppStore();
 
   // State
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -80,6 +85,22 @@ export function MeetingsPage() {
   const [selectedParticipantForMessage, setSelectedParticipantForMessage] = useState<MeetingParticipant | null>(null);
   const [directMessageContent, setDirectMessageContent] = useState('');
   const [directMessageError, setDirectMessageError] = useState<string | null>(null);
+  const [editParticipantDialogOpen, setEditParticipantDialogOpen] = useState(false);
+  const [editingParticipant, setEditingParticipant] = useState<MeetingParticipant | null>(null);
+  const [editParticipantForm, setEditParticipantForm] = useState({
+    role: 'participant' as 'host' | 'expert' | 'participant' | 'observer',
+    expertise: '',
+    role_code: '',
+    role_name: '',
+    role_color: '',
+  });
+  const [continueDialogOpen, setContinueDialogOpen] = useState(false);
+  const [continueForm, setContinueForm] = useState({
+    title: '',
+    description: '',
+    max_rounds: 5,
+    continue_reason: 'deepen' as 'correction' | 'deepen',
+  });
   const [newMeeting, setNewMeeting] = useState({
     title: '',
     description: '',
@@ -98,6 +119,7 @@ export function MeetingsPage() {
   });
   const [meetingMessages, setMeetingMessages] = useState<MeetingMessage[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [seriesDialogOpen, setSeriesDialogOpen] = useState(false);
 
   // Queries
   const { data: meetingsData, isLoading: meetingsLoading } = useQuery({
@@ -124,6 +146,29 @@ export function MeetingsPage() {
     enabled: !!selectedMeeting,
   });
 
+  // 计算选中会议的根会议ID（用于查询系列会议）
+  const rootMeetingId = useMemo(() => {
+    if (!selectedMeeting) return null;
+    // 如果有父会议，找到根会议
+    if (selectedMeeting.parent_meeting_id) {
+      const parent = (meetingsData?.items || []).find(m => m.id === selectedMeeting.parent_meeting_id);
+      if (parent?.parent_meeting_id) {
+        return parent.parent_meeting_id;
+      }
+      return selectedMeeting.parent_meeting_id;
+    }
+    // 如果没有父会议，检查是否有子会议（说明是系列会议的根）
+    const hasChildren = (meetingsData?.items || []).some(m => m.parent_meeting_id === selectedMeeting.id);
+    return hasChildren ? selectedMeeting.id : null;
+  }, [selectedMeeting, meetingsData?.items]);
+
+  // 获取系列会议
+  const { data: seriesData } = useQuery({
+    queryKey: ['series-meetings', rootMeetingId],
+    queryFn: () => (rootMeetingId ? meetingApi.getSeriesMeetings(rootMeetingId) : null),
+    enabled: !!rootMeetingId,
+  });
+
   // 获取会议类型角色配置
   const { data: roleConfigsData } = useQuery({
     queryKey: ['meeting-type-roles'],
@@ -136,6 +181,78 @@ export function MeetingsPage() {
       setMeetings(meetingsData.items);
     }
   }, [meetingsData, setMeetings]);
+
+  // 过滤会议列表：同一系列只显示最新一次会议，并计算系列总数
+  const { displayMeetings, seriesTotalMap } = useMemo(() => {
+    const allMeetings = meetingsData?.items || [];
+    if (allMeetings.length === 0) return { displayMeetings: [], seriesTotalMap: new Map<string, number>() };
+
+    // 计算每个系列的总会议数
+    // 首先找出每个系列的根会议ID
+    const rootMeetingMap = new Map<string, string>(); // meetingId -> rootMeetingId
+
+    allMeetings.forEach(meeting => {
+      if (meeting.parent_meeting_id) {
+        // 找到根会议ID
+        let rootId = meeting.parent_meeting_id;
+        const parent = allMeetings.find(m => m.id === meeting.parent_meeting_id);
+        if (parent?.parent_meeting_id) {
+          rootId = parent.parent_meeting_id;
+        }
+        rootMeetingMap.set(meeting.id, rootId);
+      } else {
+        rootMeetingMap.set(meeting.id, meeting.id);
+      }
+    });
+
+    // 统计每个系列的会议总数
+    const seriesTotal = new Map<string, number>();
+    allMeetings.forEach(meeting => {
+      const rootId = rootMeetingMap.get(meeting.id) || meeting.id;
+      seriesTotal.set(rootId, (seriesTotal.get(rootId) || 0) + 1);
+    });
+
+    // 按 parent_meeting_id 分组
+    const seriesGroups = new Map<string | null, typeof allMeetings>();
+
+    allMeetings.forEach(meeting => {
+      const groupKey = meeting.parent_meeting_id || null;
+      if (!seriesGroups.has(groupKey)) {
+        seriesGroups.set(groupKey, []);
+      }
+      seriesGroups.get(groupKey)!.push(meeting);
+    });
+
+    const result: typeof allMeetings = [];
+
+    // 处理每个分组
+    seriesGroups.forEach((group, parentKey) => {
+      if (parentKey === null) {
+        // 这些是根会议（没有 parent_meeting_id）
+        group.forEach(meeting => {
+          if (meeting.series_order === 1) {
+            // 检查是否有子会议
+            const childMeetings = allMeetings.filter(m => m.parent_meeting_id === meeting.id);
+            if (childMeetings.length === 0) {
+              // 没有子会议，显示这个会议
+              result.push(meeting);
+            } else {
+              // 有子会议，只显示最新的子会议
+              const latestChild = childMeetings.reduce((a, b) =>
+                a.series_order > b.series_order ? a : b
+              );
+              result.push(latestChild);
+            }
+          }
+        });
+      }
+      // 有 parent_meeting_id 的会议会在上面处理根会议时被包含
+    });
+
+    // 按创建时间排序
+    result.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return { displayMeetings: result, seriesTotalMap: seriesTotal };
+  }, [meetingsData?.items]);
 
   // Update messages when data loads
   useEffect(() => {
@@ -240,6 +357,37 @@ export function MeetingsPage() {
     },
   });
 
+  const updateParticipantMutation = useMutation({
+    mutationFn: (data: { participantId: string; updates: typeof editParticipantForm }) =>
+      meetingApi.updateParticipant(data.participantId, {
+        role: data.updates.role,
+        expertise: data.updates.expertise || undefined,
+        role_code: data.updates.role_code || undefined,
+        role_name: data.updates.role_name || undefined,
+        role_color: data.updates.role_color || undefined,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['participants', selectedMeeting?.id] });
+      setEditParticipantDialogOpen(false);
+      setEditingParticipant(null);
+    },
+  });
+
+  const removeParticipantMutation = useMutation({
+    mutationFn: (participantId: string) => meetingApi.removeParticipant(participantId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['participants', selectedMeeting?.id] });
+    },
+  });
+
+  const reorderParticipantsMutation = useMutation({
+    mutationFn: (data: { participantOrders: Array<{ id: string; speaking_order: number }> }) =>
+      meetingApi.reorderParticipants(selectedMeeting!.id, { participant_orders: data.participantOrders }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['participants', selectedMeeting?.id] });
+    },
+  });
+
   const setReadyMutation = useMutation({
     mutationFn: (id: string) => meetingApi.setReady(id),
     onSuccess: (data) => {
@@ -297,6 +445,21 @@ export function MeetingsPage() {
       if (selectedMeeting?.id === data.id) {
         updateMeeting(data.id, { status: 'cancelled' });
       }
+      queryClient.invalidateQueries({ queryKey: ['meetings'] });
+    },
+  });
+
+  const continueMeetingMutation = useMutation({
+    mutationFn: (data: { meetingId: string; form: typeof continueForm }) =>
+      meetingApi.continueMeeting(data.meetingId, {
+        title: data.form.title || undefined,
+        description: data.form.description || undefined,
+        max_rounds: data.form.max_rounds,
+        continue_reason: data.form.continue_reason,
+      }),
+    onSuccess: (data) => {
+      setContinueDialogOpen(false);
+      selectMeeting(data);
       queryClient.invalidateQueries({ queryKey: ['meetings'] });
     },
   });
@@ -418,14 +581,14 @@ export function MeetingsPage() {
             <div className="flex items-center justify-center h-32">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
-          ) : meetings.length === 0 ? (
+          ) : displayMeetings.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
               <Users className="h-8 w-8 mb-2" />
               <p className="text-sm">暂无会议</p>
             </div>
           ) : (
             <div className="divide-y">
-              {meetings.map((meeting) => (
+              {displayMeetings.map((meeting) => (
                 <div
                   key={meeting.id}
                   className={`p-4 cursor-pointer hover:bg-accent transition-colors ${
@@ -435,7 +598,23 @@ export function MeetingsPage() {
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      <h4 className="font-medium truncate">{meeting.title}</h4>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-medium truncate">{meeting.title}</h4>
+                        {(meeting.series_order > 1 || meeting.parent_meeting_id) && (() => {
+                          // 找到根会议ID
+                          let rootId = meeting.id;
+                          if (meeting.parent_meeting_id) {
+                            const parent = (meetingsData?.items || []).find(m => m.id === meeting.parent_meeting_id);
+                            rootId = parent?.parent_meeting_id || meeting.parent_meeting_id;
+                          }
+                          const total = seriesTotalMap.get(rootId) || 1;
+                          return total > 1 ? (
+                            <Badge variant="outline" className="text-xs flex-shrink-0 text-blue-600 border-blue-300">
+                              系列会议·共{total}次
+                            </Badge>
+                          ) : null;
+                        })()}
+                      </div>
                       <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
                         {meeting.description || '无描述'}
                       </p>
@@ -465,20 +644,61 @@ export function MeetingsPage() {
             <CardHeader className="flex-shrink-0 border-b">
               <div className="flex items-start justify-between">
                 <div>
-                  <CardTitle>{selectedMeeting.title}</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <CardTitle>{selectedMeeting.title}</CardTitle>
+                    {seriesData && 'items' in seriesData && seriesData.items && seriesData.items.length > 1 && (
+                      <Badge variant="outline" className="text-xs text-blue-600 border-blue-300">
+                        系列会议·共{seriesData.items.length}次
+                      </Badge>
+                    )}
+                  </div>
+                  {/* 系列会议导航条 */}
+                  {seriesData && 'items' in seriesData && seriesData.items && seriesData.items.length > 1 && (
+                    <div className="flex items-center gap-1 mt-2 p-2 bg-muted/50 rounded-md">
+                      <span className="text-xs text-muted-foreground mr-2">系列:</span>
+                      {seriesData.items.map((m: Meeting, idx: number) => (
+                        <Button
+                          key={m.id}
+                          size="sm"
+                          variant={m.id === selectedMeeting.id ? 'default' : 'ghost'}
+                          className="h-6 px-2 text-xs"
+                          onClick={() => selectMeeting(m)}
+                        >
+                          {idx + 1}
+                          {m.id === selectedMeeting.id && ' ●'}
+                        </Button>
+                      ))}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-2 text-xs ml-2"
+                        onClick={() => setSeriesDialogOpen(true)}
+                      >
+                        查看全部
+                      </Button>
+                    </div>
+                  )}
                   <p className="text-sm text-muted-foreground mt-1">
                     {selectedMeeting.description || '无描述'}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
                   {selectedMeeting.status === 'draft' && (
-                    <Button
-                      size="sm"
-                      onClick={() => setReadyMutation.mutate(selectedMeeting.id)}
-                      disabled={setReadyMutation.isPending}
-                    >
-                      准备就绪
-                    </Button>
+                    <>
+                      {!hostParticipant && (
+                        <span className="text-xs text-amber-600">
+                          请添加主持人后再准备就绪
+                        </span>
+                      )}
+                      <Button
+                        size="sm"
+                        onClick={() => setReadyMutation.mutate(selectedMeeting.id)}
+                        disabled={setReadyMutation.isPending || !hostParticipant}
+                        title={!hostParticipant ? '请先添加主持人' : ''}
+                      >
+                        准备就绪
+                      </Button>
+                    </>
                   )}
                   {selectedMeeting.status === 'ready' && (
                     <Button
@@ -541,8 +761,21 @@ export function MeetingsPage() {
                     </>
                   )}
                   {selectedMeeting.status === 'completed' && (
-                    <Button size="sm" variant="outline" onClick={() => meetingApi.summarize(selectedMeeting.id)}>
-                      生成总结
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setContinueForm({
+                          title: selectedMeeting.title,
+                          description: selectedMeeting.description || '',
+                          max_rounds: selectedMeeting.max_rounds,
+                          continue_reason: 'deepen',
+                        });
+                        setContinueDialogOpen(true);
+                      }}
+                    >
+                      <RotateCcw className="h-4 w-4 mr-1" />
+                      继续开会
                     </Button>
                   )}
                   {['draft', 'ready'].includes(selectedMeeting.status) && (
@@ -616,85 +849,181 @@ export function MeetingsPage() {
                     </div>
                   ) : (
                     <div className="divide-y">
-                      {participantsData?.items.map((participant: MeetingParticipant) => (
+                      {participantsData?.items.map((participant: MeetingParticipant, index: number) => (
                         <div key={participant.id} className="p-4">
                           <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium">
-                                {instanceMap.get(participant.instance_id)?.name ||
-                                  participant.instance_id}
-                              </span>
-                              {/* 显示预定义角色或默认角色 */}
-                              {participant.role_name ? (
-                                <Badge
-                                  className="text-xs"
-                                  style={{
-                                    backgroundColor: participant.role_color || '#6B7280',
-                                    color: '#fff',
-                                  }}
-                                >
-                                  {participant.role_name}
-                                </Badge>
-                              ) : (
-                                <Badge
-                                  variant={
-                                    participant.role === 'host'
-                                      ? 'default'
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium">
+                                  {instanceMap.get(participant.instance_id)?.name ||
+                                    participant.instance_id}
+                                </span>
+                                {/* 显示预定义角色或默认角色 */}
+                                {participant.role_name ? (
+                                  <Badge
+                                    className="text-xs"
+                                    style={{
+                                      backgroundColor: participant.role_color || '#6B7280',
+                                      color: '#fff',
+                                    }}
+                                  >
+                                    {participant.role_name}
+                                  </Badge>
+                                ) : (
+                                  <Badge
+                                    variant={
+                                      participant.role === 'host'
+                                        ? 'default'
+                                        : participant.role === 'expert'
+                                        ? 'secondary'
+                                        : 'outline'
+                                    }
+                                    className="text-xs"
+                                  >
+                                    {participant.role === 'host'
+                                      ? '主持人'
                                       : participant.role === 'expert'
-                                      ? 'secondary'
-                                      : 'outline'
-                                  }
-                                  className="text-xs"
-                                >
-                                  {participant.role === 'host'
-                                    ? '主持人'
-                                    : participant.role === 'expert'
-                                    ? '专家'
-                                    : participant.role === 'observer'
-                                    ? '观察员'
-                                    : '参会者'}
-                                </Badge>
+                                      ? '专家'
+                                      : participant.role === 'observer'
+                                      ? '观察员'
+                                      : '参会者'}
+                                  </Badge>
+                                )}
+                                <span className="text-xs text-muted-foreground">
+                                  发言顺序: {participant.speaking_order}
+                                </span>
+                              </div>
+                              {participant.expertise && (
+                                <p className="text-sm text-muted-foreground mt-1">
+                                  专业: {participant.expertise}
+                                </p>
                               )}
                             </div>
-                            {selectedMeeting.status === 'in_progress' &&
-                              participant.role !== 'host' && (
+
+                            {/* 操作按钮区域 */}
+                            <div className="flex items-center gap-1">
+                              {/* 发言顺序调整（主持人不可调整） */}
+                              {['draft', 'ready'].includes(selectedMeeting.status) &&
+                                participant.role !== 'host' &&
+                                participant.instance_id !== selectedMeeting.host_instance_id && (
                                 <>
                                   <Button
                                     size="sm"
                                     variant="ghost"
-                                    onClick={() =>
-                                      inviteSpeakMutation.mutate({
-                                        meetingId: selectedMeeting.id,
-                                        participantId: participant.id,
-                                      })
-                                    }
-                                    disabled={inviteSpeakMutation.isPending}
-                                    title="邀请发言"
+                                    className="h-7 w-7 p-0"
+                                    onClick={() => {
+                                      const participants = participantsData?.items || [];
+                                      if (index > 0) {
+                                        const newOrder = [...participants];
+                                        [newOrder[index - 1], newOrder[index]] = [newOrder[index], newOrder[index - 1]];
+                                        reorderParticipantsMutation.mutate({
+                                          participantOrders: newOrder.map((p, i) => ({ id: p.id, speaking_order: i + 1 })),
+                                        });
+                                      }
+                                    }}
+                                    disabled={index === 0 || reorderParticipantsMutation.isPending}
+                                    title="上移发言顺序"
                                   >
-                                    <Mic className="h-4 w-4" />
+                                    <ChevronUp className="h-4 w-4" />
                                   </Button>
                                   <Button
                                     size="sm"
                                     variant="ghost"
+                                    className="h-7 w-7 p-0"
                                     onClick={() => {
-                                      setSelectedParticipantForMessage(participant);
-                                      setDirectMessageDialogOpen(true);
+                                      const participants = participantsData?.items || [];
+                                      if (index < participants.length - 1) {
+                                        const newOrder = [...participants];
+                                        [newOrder[index], newOrder[index + 1]] = [newOrder[index + 1], newOrder[index]];
+                                        reorderParticipantsMutation.mutate({
+                                          participantOrders: newOrder.map((p, i) => ({ id: p.id, speaking_order: i + 1 })),
+                                        });
+                                      }
                                     }}
-                                    title="发送私信"
+                                    disabled={index === (participantsData?.items.length || 0) - 1 || reorderParticipantsMutation.isPending}
+                                    title="下移发言顺序"
                                   >
-                                    <Mail className="h-4 w-4" />
+                                    <ChevronDown className="h-4 w-4" />
                                   </Button>
                                 </>
                               )}
+
+                              {/* 会议进行中的操作 */}
+                              {selectedMeeting.status === 'in_progress' &&
+                                participant.role !== 'host' && (
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-7 w-7 p-0"
+                                      onClick={() =>
+                                        inviteSpeakMutation.mutate({
+                                          meetingId: selectedMeeting.id,
+                                          participantId: participant.id,
+                                        })
+                                      }
+                                      disabled={inviteSpeakMutation.isPending}
+                                      title="邀请发言"
+                                    >
+                                      <Mic className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-7 w-7 p-0"
+                                      onClick={() => {
+                                        setSelectedParticipantForMessage(participant);
+                                        setDirectMessageDialogOpen(true);
+                                      }}
+                                      title="发送私信"
+                                    >
+                                      <Mail className="h-4 w-4" />
+                                    </Button>
+                                  </>
+                                )}
+
+                              {/* 编辑和删除（主持人不可编辑删除） */}
+                              {['draft', 'ready'].includes(selectedMeeting.status) &&
+                                participant.role !== 'host' &&
+                                participant.instance_id !== selectedMeeting.host_instance_id && (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 w-7 p-0"
+                                    onClick={() => {
+                                      setEditingParticipant(participant);
+                                      setEditParticipantForm({
+                                        role: participant.role,
+                                        expertise: participant.expertise || '',
+                                        role_code: participant.role_code || '',
+                                        role_name: participant.role_name || '',
+                                        role_color: participant.role_color || '',
+                                      });
+                                      setEditParticipantDialogOpen(true);
+                                    }}
+                                    title="编辑参会者"
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                                    onClick={() => {
+                                      if (confirm('确定要移除该参会者吗？')) {
+                                        removeParticipantMutation.mutate(participant.id);
+                                      }
+                                    }}
+                                    disabled={removeParticipantMutation.isPending}
+                                    title="移除参会者"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </>
+                              )}
+                            </div>
                           </div>
-                          {participant.expertise && (
-                            <p className="text-sm text-muted-foreground mt-1">
-                              专业: {participant.expertise}
-                            </p>
-                          )}
-                          <p className="text-xs text-muted-foreground mt-1">
-                            发言顺序: {participant.speaking_order}
-                          </p>
                         </div>
                       ))}
                     </div>
@@ -1093,6 +1422,314 @@ export function MeetingsPage() {
                 <Loader2 className="h-4 w-4 mr-1 animate-spin" />
               )}
               添加
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Participant Dialog */}
+      <Dialog open={editParticipantDialogOpen} onOpenChange={(open) => {
+        setEditParticipantDialogOpen(open);
+        if (!open) {
+          setEditingParticipant(null);
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>编辑参会者</DialogTitle>
+            <DialogDescription>
+              修改 {editingParticipant && instanceMap.get(editingParticipant.instance_id)?.name} 的信息
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            {/* 预定义角色选择 */}
+            {currentMeetingTypeRoles.length > 0 && (
+              <div className="grid gap-2">
+                <Label>预定义角色</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {/* 清除预定义角色选项 */}
+                  <div
+                    className={`p-2 border rounded cursor-pointer hover:bg-accent ${
+                      !editParticipantForm.role_code ? 'border-primary bg-accent' : ''
+                    }`}
+                    onClick={() => {
+                      setEditParticipantForm({
+                        ...editParticipantForm,
+                        role_code: '',
+                        role_name: '',
+                        role_color: '',
+                        role: 'participant',
+                      });
+                    }}
+                  >
+                    <span className="text-sm">无预定义角色</span>
+                  </div>
+                  {currentMeetingTypeRoles.map((role) => {
+                    const isCurrentRole = editParticipantForm.role_code === role.code;
+                    return (
+                      <div
+                        key={role.code}
+                        className={`p-2 border rounded cursor-pointer hover:bg-accent ${
+                          isCurrentRole ? 'border-primary bg-accent' : ''
+                        }`}
+                        onClick={() => {
+                          setEditParticipantForm({
+                            ...editParticipantForm,
+                            role_code: role.code,
+                            role_name: role.name,
+                            role_color: role.color,
+                            role: role.is_host ? 'host' : 'participant',
+                          });
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="w-4 h-4 rounded-full"
+                            style={{ backgroundColor: role.color }}
+                          />
+                          <span className="font-medium text-sm">{role.name}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* 角色类型（如果没有预定义角色） */}
+            {currentMeetingTypeRoles.length === 0 && (
+              <div className="grid gap-2">
+                <Label htmlFor="edit_role">角色类型</Label>
+                <Select
+                  value={editParticipantForm.role}
+                  onValueChange={(value: typeof editParticipantForm.role) =>
+                    setEditParticipantForm({ ...editParticipantForm, role: value })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="host">主持人</SelectItem>
+                    <SelectItem value="expert">专家</SelectItem>
+                    <SelectItem value="participant">参会者</SelectItem>
+                    <SelectItem value="observer">观察员</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* 专业领域 */}
+            <div className="grid gap-2">
+              <Label htmlFor="edit_expertise">专业领域</Label>
+              <Input
+                id="edit_expertise"
+                value={editParticipantForm.expertise}
+                onChange={(e) =>
+                  setEditParticipantForm({ ...editParticipantForm, expertise: e.target.value })
+                }
+                placeholder="描述该参会者的专业领域（可选）"
+              />
+            </div>
+
+            {/* 显示选中的预定义角色 */}
+            {editParticipantForm.role_code && (
+              <div className="flex items-center gap-2 p-2 bg-muted rounded">
+                <div
+                  className="w-4 h-4 rounded-full"
+                  style={{ backgroundColor: editParticipantForm.role_color }}
+                />
+                <span className="text-sm">已选择: {editParticipantForm.role_name}</span>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditParticipantDialogOpen(false)}>
+              取消
+            </Button>
+            <Button
+              onClick={() => {
+                if (editingParticipant) {
+                  updateParticipantMutation.mutate({
+                    participantId: editingParticipant.id,
+                    updates: editParticipantForm,
+                  });
+                }
+              }}
+              disabled={updateParticipantMutation.isPending}
+            >
+              {updateParticipantMutation.isPending && (
+                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+              )}
+              保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Continue Meeting Dialog */}
+      <Dialog open={continueDialogOpen} onOpenChange={setContinueDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>继续开会</DialogTitle>
+            <DialogDescription>
+              创建系列会议的新会议，保留参会者配置，原有会议记录将被保留。
+              {selectedMeeting && selectedMeeting.series_order > 1 && (
+                <span className="block mt-1 text-blue-600">
+                  当前是第 {selectedMeeting.series_order} 次会议
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="continue_title">会议主题</Label>
+              <Input
+                id="continue_title"
+                value={continueForm.title}
+                onChange={(e) => setContinueForm({ ...continueForm, title: e.target.value })}
+                placeholder="会议主题"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="continue_description">会议描述</Label>
+              <Textarea
+                id="continue_description"
+                value={continueForm.description}
+                onChange={(e) => setContinueForm({ ...continueForm, description: e.target.value })}
+                placeholder="描述本次会议的具体目标或需要深入讨论的内容"
+                rows={3}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="continue_max_rounds">最大讨论轮数</Label>
+              <Input
+                id="continue_max_rounds"
+                type="number"
+                min={1}
+                max={20}
+                value={continueForm.max_rounds}
+                onChange={(e) => setContinueForm({ ...continueForm, max_rounds: parseInt(e.target.value) || 5 })}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label>继续开会原因</Label>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="continue_reason"
+                    checked={continueForm.continue_reason === 'deepen'}
+                    onChange={() => setContinueForm({ ...continueForm, continue_reason: 'deepen' })}
+                  />
+                  <span>深入讨论</span>
+                  <span className="text-xs text-muted-foreground">(上次内容需要深入)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="continue_reason"
+                    checked={continueForm.continue_reason === 'correction'}
+                    onChange={() => setContinueForm({ ...continueForm, continue_reason: 'correction' })}
+                  />
+                  <span>方向纠偏</span>
+                  <span className="text-xs text-muted-foreground">(上次主题有偏差)</span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setContinueDialogOpen(false)}>
+              取消
+            </Button>
+            <Button
+              onClick={() => {
+                if (selectedMeeting) {
+                  continueMeetingMutation.mutate({
+                    meetingId: selectedMeeting.id,
+                    form: continueForm,
+                  });
+                }
+              }}
+              disabled={continueMeetingMutation.isPending}
+            >
+              {continueMeetingMutation.isPending && (
+                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+              )}
+              创建新会议
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Series Meetings Dialog */}
+      <Dialog open={seriesDialogOpen} onOpenChange={setSeriesDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle>系列会议</DialogTitle>
+            <DialogDescription>
+              {selectedMeeting?.title} 的系列会议历史
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="flex-1">
+            <div className="space-y-3 py-4">
+              {seriesData && 'items' in seriesData && seriesData.items?.map((m: Meeting, idx: number) => (
+                <div
+                  key={m.id}
+                  className={`p-4 border rounded-lg cursor-pointer transition-colors ${
+                    m.id === selectedMeeting?.id ? 'border-primary bg-accent' : 'hover:bg-accent/50'
+                  }`}
+                  onClick={() => {
+                    selectMeeting(m);
+                    setSeriesDialogOpen(false);
+                  }}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold">
+                          {idx + 1}
+                        </span>
+                        <span className="font-medium">{m.title}</span>
+                        {m.id === selectedMeeting?.id && (
+                          <Badge variant="default" className="text-xs">当前</Badge>
+                        )}
+                      </div>
+                      {m.description && (
+                        <p className="text-sm text-muted-foreground mt-1 ml-8 line-clamp-2">
+                          {m.description}
+                        </p>
+                      )}
+                      <div className="flex items-center gap-4 mt-2 ml-8 text-xs text-muted-foreground">
+                        <span>
+                          状态: {statusConfig[m.status]?.label || m.status}
+                        </span>
+                        <span>
+                          轮数: {m.current_round}/{m.max_rounds}
+                        </span>
+                        {m.continue_reason && (
+                          <span className="text-blue-600">
+                            {m.continue_reason === 'deepen' ? '深入讨论' : '方向纠偏'}
+                          </span>
+                        )}
+                        <span>
+                          {m.created_at ? new Date(m.created_at).toLocaleDateString('zh-CN') : ''}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  {m.summary && (
+                    <div className="mt-2 ml-8 p-2 bg-muted/30 rounded text-xs text-muted-foreground line-clamp-3">
+                      {m.summary.substring(0, 200)}...
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSeriesDialogOpen(false)}>
+              关闭
             </Button>
           </DialogFooter>
         </DialogContent>

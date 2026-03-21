@@ -33,7 +33,7 @@ DEFAULT_ROLE_CONFIGS = {
             {
                 "name": "白色思考帽",
                 "code": "white_hat",
-                "color": "#F3F4F6",
+                "color": "#9CA3AF",
                 "description": "中立客观 - 关注客观的事实和数据",
                 "order": 2,
                 "is_host": False,

@@ -29,6 +29,7 @@ import type {
   MeetingCreate,
   MeetingUpdate,
   MeetingList,
+  MeetingContinue,
   MeetingParticipant,
   ParticipantCreate,
   ParticipantUpdate,
@@ -563,6 +564,34 @@ export const meetingApi = {
   cancel: async (id: string): Promise<Meeting> => {
     try {
       const response = await apiClient.post<Meeting>(`/meetings/${id}/cancel`);
+      return response.data;
+    } catch (error) {
+      return handleError(error as AxiosError);
+    }
+  },
+
+  restart: async (id: string): Promise<Meeting> => {
+    try {
+      const response = await apiClient.post<Meeting>(`/meetings/${id}/restart`);
+      return response.data;
+    } catch (error) {
+      return handleError(error as AxiosError);
+    }
+  },
+
+  continueMeeting: async (id: string, data: MeetingContinue): Promise<Meeting> => {
+    try {
+      const response = await apiClient.post<Meeting>(`/meetings/${id}/continue`, data);
+      return response.data;
+    } catch (error) {
+      return handleError(error as AxiosError);
+    }
+  },
+
+  // Series Meetings
+  getSeriesMeetings: async (id: string): Promise<MeetingList> => {
+    try {
+      const response = await apiClient.get<MeetingList>(`/meetings/${id}/series`);
       return response.data;
     } catch (error) {
       return handleError(error as AxiosError);

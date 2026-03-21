@@ -252,9 +252,16 @@ class PromptService:
         your_expertise: str,
         previous_summaries: str,
         current_round_messages: str,
-        host_invitation: str
+        host_invitation: str,
+        role_description: str = "",
+        role_task: str = "从你的专业领域出发，针对会议主题发表观点。",
     ) -> str:
         """渲染参会者发言提示词"""
+        # 构建角色描述部分
+        role_description_section = ""
+        if role_description:
+            role_description_section = f"- 角色说明：{role_description}"
+
         return self.render_template(template, "participant_speak", {
             "meeting_title": meeting_title,
             "meeting_type_label": meeting_type_label,
@@ -265,4 +272,6 @@ class PromptService:
             "previous_summaries": previous_summaries or "暂无",
             "current_round_messages": current_round_messages or "暂无",
             "host_invitation": host_invitation,
+            "role_description_section": role_description_section,
+            "role_task": role_task,
         })

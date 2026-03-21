@@ -103,14 +103,21 @@ async def lifespan(app: FastAPI):
                     instance.status = InstanceStatus.CONNECTING
                     await db.commit()
 
+                    # 推送 CONNECTING 状态
+                    from app.services.socketio_service import push_status_update
+                    await push_status_update(instance.id, "connecting")
+
                     connected = await instance_service.connect_instance(instance.id)
                     if connected:
                         log_print("[RECONNECT]", f"Successfully connected to instance {instance.name} ({instance.id})")
+                        # connect_instance 内部已经设置了 CONNECTED 状态
                     else:
                         log_print("[RECONNECT]", f"Failed to connect to instance {instance.name} ({instance.id})")
                         instance.status = InstanceStatus.ERROR
                         instance.status_message = "Connection failed"
                         await db.commit()
+                        # 推送 ERROR 状态
+                        await push_status_update(instance.id, "error")
 
                     # 每次连接后等待一小段时间，让 AO 端有时间处理
                     await asyncio.sleep(0.5)
@@ -120,10 +127,25 @@ async def lifespan(app: FastAPI):
                     instance.status = InstanceStatus.ERROR
                     instance.status_message = str(e)
                     await db.commit()
+                    # 推送 ERROR 状态
+                    await push_status_update(instance.id, "error")
 
     yield
     # Shutdown
     connector_pool = get_connector_pool()
+
+    # 关闭所有连接前，先更新数据库状态
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Instance).where(Instance.status == InstanceStatus.CONNECTED)
+        )
+        connected_instances = result.scalars().all()
+        for instance in connected_instances:
+            instance.status = InstanceStatus.DISCONNECTED
+            instance.status_message = "Server shutdown"
+        await db.commit()
+        log_print("[SHUTDOWN]", f"Updated {len(connected_instances)} instances to DISCONNECTED")
+
     await connector_pool.close_all()
     log_print("[SHUTDOWN]", "Shutting down...")
 

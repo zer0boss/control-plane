@@ -153,6 +153,7 @@ DEFAULT_TEMPLATE = {
 
 ## 你的身份
 - 角色：{your_role}
+{role_description_section}
 - 专业领域：{your_expertise}
 
 ## 讨论背景
@@ -165,11 +166,11 @@ DEFAULT_TEMPLATE = {
 "{host_invitation}"
 
 ## 你的任务
-从你的专业领域出发，针对会议主题发表观点。
+{role_task}
 
 ## 要求
 - 观点明确，有理有据
-- 结合你的专业背景
+- 结合你的角色定位和专业背景
 - 可以回应之前的发言，支持或补充
 - 如有不同意见，礼貌表达
 - 字数控制在{max_speak_words}字以内

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Plus,
@@ -33,7 +33,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { instanceApi } from '@/services/api';
-import type { InstanceCreate, AuthType } from '@/types';
+import { wsService } from '@/services/websocket';
+import type { InstanceCreate, AuthType, Instance } from '@/types';
 
 export function InstancesPage() {
   const queryClient = useQueryClient();
@@ -56,6 +57,30 @@ export function InstancesPage() {
     staleTime: 0, // Always consider data stale
     refetchOnMount: 'always', // Always refetch when component mounts
   });
+
+  // 监听 Socket.IO status 事件，实时更新实例状态
+  useEffect(() => {
+    const handleStatusUpdate = (data: { instance_id: string; status: string }) => {
+      console.log('Received status update:', data);
+      // 更新 React Query 缓存中的实例状态
+      queryClient.setQueryData(['instances'], (old: { items: Instance[]; total: number } | undefined) => {
+        if (!old) return old;
+        return {
+          ...old,
+          items: old.items.map((instance) =>
+            instance.id === data.instance_id
+              ? { ...instance, status: data.status as Instance['status'] }
+              : instance
+          ),
+        };
+      });
+    };
+
+    wsService.on('status', handleStatusUpdate);
+    return () => {
+      wsService.off('status', handleStatusUpdate);
+    };
+  }, [queryClient]);
 
   const createMutation = useMutation({
     mutationFn: instanceApi.create,
@@ -410,9 +435,16 @@ export function InstancesPage() {
                         {instance.health?.message_count || 0} messages
                       </span>
                     </div>
-                    <span className="text-xs text-muted-foreground">
-                      {instance.channel_id}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {instance.health?.ao_connections !== undefined && (
+                        <span className="text-xs text-muted-foreground" title="AO 端连接数">
+                          🔗 {instance.health.ao_connections}/{instance.health.ao_max_connections || '?'}
+                        </span>
+                      )}
+                      <span className="text-xs text-muted-foreground">
+                        {instance.channel_id}
+                      </span>
+                    </div>
                   </div>
                   {instance.status_message && (
                     <p className="text-xs text-red-500">

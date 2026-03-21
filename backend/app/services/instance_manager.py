@@ -362,7 +362,8 @@ class InstanceService:
                 flow_service = MeetingFlowService(db)
 
                 # Need to determine if this is a round summary or closing summary
-                # Check if current round already has a summary stored
+                # Case 1: If current round already has a summary stored, this must be the closing summary
+                # Case 2: If this is the last round (current_round >= max_rounds), this is the closing summary
                 round_result = await db.execute(
                     select(MeetingRound).where(
                         MeetingRound.meeting_id == meeting_id,
@@ -371,9 +372,12 @@ class InstanceService:
                 )
                 current_round_record = round_result.scalar_one_or_none()
 
-                # If current round already has a summary, this must be the closing summary
-                if current_round_record and current_round_record.summary:
-                    logger.info(f"[{ts}] [InstanceManager] Processing meeting closing summary")
+                # Check if this should be treated as closing summary
+                is_last_round = meeting.current_round >= meeting.max_rounds
+                has_round_summary = current_round_record and current_round_record.summary
+
+                if has_round_summary or is_last_round:
+                    logger.info(f"[{ts}] [InstanceManager] Processing meeting closing summary (last_round={is_last_round}, has_summary={has_round_summary})")
                     # Save the closing summary and complete the meeting
                     meeting.summary = content
                     meeting.status = "completed"
@@ -447,12 +451,35 @@ class InstanceService:
     def _handle_status_change(self, instance_id: str, status: str):
         """Handle connection status change."""
         import logging
+        import asyncio
+        from app.services.socketio_service import push_status_update
         logger = logging.getLogger(__name__)
         ts = format_beijing_time(beijing_now())
         logger.info(f"[{ts}] Instance {instance_id} status changed to: {status}")
 
+        # 推送状态更新到前端
+        try:
+            # 获取或创建事件循环
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # 如果已经在异步上下文中，创建任务
+                asyncio.create_task(push_status_update(instance_id, status))
+            else:
+                # 否则运行协程
+                loop.run_until_complete(push_status_update(instance_id, status))
+        except Exception as e:
+            logger.error(f"[{ts}] Failed to push status update: {e}")
+
     def to_response(self, instance: Instance) -> InstanceResponse:
         """Convert instance model to response schema."""
+        # 获取 AO 端连接数信息
+        ao_connections = None
+        ao_max_connections = None
+        connector = self.connector_pool.get_connector(instance.id)
+        if connector:
+            ao_connections = connector.ao_connections
+            ao_max_connections = connector.ao_max_connections
+
         return InstanceResponse(
             id=instance.id,
             name=instance.name,
@@ -461,7 +488,10 @@ class InstanceService:
             channel_id=instance.channel_id,
             status=instance.status,
             status_message=instance.status_message,
-            health=InstanceHealth(),  # Populated separately
+            health=InstanceHealth(
+                ao_connections=ao_connections,
+                ao_max_connections=ao_max_connections,
+            ),
             last_connected_at=instance.last_connected_at,
             last_error_at=instance.last_error_at,
             created_at=instance.created_at,
